@@ -65,6 +65,7 @@ export default function App() {
   const [mode, setMode] = useState<PlayMode>(initial.mode)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [queueExpanded, setQueueExpanded] = useState(false)
   const player = useAudioPlayer()
   const autoplayStarted = useRef(false)
 
@@ -310,7 +311,10 @@ export default function App() {
         <section className="queue">
           <h2>In coda · {player.playlist.length}</h2>
           <ul>
-            {player.playlist.map((t, i) => (
+            {(queueExpanded
+              ? player.playlist
+              : player.playlist.slice(0, 40)
+            ).map((t, i) => (
               <li key={`${t.id}-${i}`}>
                 <button
                   className={i === player.index ? 'queue-item active' : 'queue-item'}
@@ -325,6 +329,14 @@ export default function App() {
               </li>
             ))}
           </ul>
+          {!queueExpanded && player.playlist.length > 40 && (
+            <button
+              className="btn ghost small"
+              onClick={() => setQueueExpanded(true)}
+            >
+              Mostra tutti i {player.playlist.length} brani
+            </button>
+          )}
         </section>
       )}
 

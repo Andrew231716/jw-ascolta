@@ -58,6 +58,7 @@ button {
   inset: 0;
   z-index: -1;
   overflow: hidden;
+  pointer-events: none;
   background:
     radial-gradient(1200px 700px at 10% -10%, #1a4a4f 0%, transparent 55%),
     radial-gradient(900px 600px at 100% 10%, #3a2a18 0%, transparent 50%),

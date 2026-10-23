@@ -90,8 +90,7 @@ export function useAudioPlayer() {
           ...s,
           loading: false,
           playing: false,
-          error:
-            'Tocca Riproduci per avviare l’audio (richiesto da Safari/iOS).',
+          error: 'Tocca ▶ per avviare l’audio (blocco autoplay del browser).',
         }))
       }
     } else {
