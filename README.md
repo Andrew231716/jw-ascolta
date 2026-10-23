@@ -2,6 +2,9 @@
 
 App web personale per riprodurre **cantici, canzoni e musica** dalla sezione [Musica di JW.org](https://www.jw.org/it/biblioteca-digitale/musica/).
 
+**Live:** https://andrew231716.github.io/jw-ascolta/  
+**Repo:** https://github.com/Andrew231716/jw-ascolta
+
 ## Funzioni
 
 - Riproduzione di **tutto** il catalogo audio musicale (italiano)
