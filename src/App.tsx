@@ -205,7 +205,7 @@ export default function App() {
 
       <nav className="top-nav" aria-label="Navigazione">
         <button type="button" className="nav-link" onClick={openSiriGuide}>
-          Guida Siri
+          Siri per titolo
         </button>
       </nav>
 
@@ -225,7 +225,7 @@ export default function App() {
             Riproduci tutto a caso
           </button>
           <button type="button" className="btn ghost" onClick={openSiriGuide}>
-            Guida comandi Siri
+            Siri per titolo
           </button>
         </div>
       </header>
@@ -398,20 +398,20 @@ export default function App() {
             {catalogLoading ? 'Carico…' : 'Riproduci selezione'}
           </button>
           <button type="button" className="btn ghost" onClick={openSiriGuide}>
-            Guida comandi Siri
+            Siri per titolo
           </button>
         </div>
       </section>
 
       <section className="siri-teaser" id="siri">
-        <h2>Comandi Siri</h2>
+        <h2>Siri · riproduci per titolo</h2>
         <p className="section-lede">
-          Un solo comando per tutti i brani: Siri chiede il titolo, parte da lì
-          e continua da sola. Apri la guida per i passaggi e gli URL pronti.
+          Un solo comando per tutti i brani: dici «riproduci da JW», Siri chiede
+          il titolo (es. Sorgerà), parte da lì e continua da sola con il resto.
         </p>
         <div className="cta-row">
           <button type="button" className="btn primary" onClick={openSiriGuide}>
-            Apri guida Siri
+            Come configurarlo
           </button>
         </div>
       </section>
@@ -500,7 +500,7 @@ export default function App() {
         </p>
         <p>
           <button type="button" className="foot-link" onClick={openSiriGuide}>
-            Guida comandi Siri
+            Siri per titolo
           </button>
         </p>
       </footer>
@@ -525,18 +525,14 @@ function SiriGuide({
   shareUrl: string
   onBack: () => void
 }) {
-  const titleExample = makeTitleExample('Sorgerà', 'canzoni', 'shuffle')
-  const askUrl = makeTitleExample('TITOLO', 'tutto', 'shuffle')
+  const origin = window.location.origin + window.location.pathname
+  const titleBase = `${origin}?s=tutto&mode=shuffle&play=1&title=`
+  const titleExample = makeTitleExample('Sorgerà', 'tutto', 'shuffle')
 
-  const examples = [
+  const otherExamples = [
     {
       phrase: 'Hey Siri, riproduci da JW canzoni',
       url: makeExample('canzoni', 'shuffle'),
-    },
-    {
-      phrase: 'Hey Siri, riproduci da JW Sorgerà',
-      url: titleExample,
-      note: 'Sostituisci Sorgerà con il titolo nel URL, oppure usa il comando con domanda qui sotto.',
     },
     {
       phrase: 'Hey Siri, riproduci da JW musica internazionale',
@@ -546,10 +542,6 @@ function SiriGuide({
       phrase: 'Hey Siri, riproduci da JW musica in modo casuale',
       url: makeExample('tutto', 'shuffle'),
     },
-    {
-      phrase: 'Hey Siri, riproduci da JW adunanze in ordine',
-      url: makeExample('adunanze', 'order'),
-    },
   ]
 
   return (
@@ -558,84 +550,88 @@ function SiriGuide({
         ← Indietro
       </button>
       <p className="brand">JW Ascolta</p>
-      <h1>Comandi Siri</h1>
+      <h1>Riproduci per titolo con Siri</h1>
       <p className="lede">
-        Su iPhone, crea un comando rapido che apre un link di questa app. Poi
-        assegna la frase che preferisci.
+        Un solo comando per tutti i brani. Dici il titolo, parte da lì e poi
+        continua da sola con il resto della coda.
       </p>
 
-      <ol className="steps">
-        <li>
-          Apri l’app <strong>Comandi</strong> (Shortcuts).
-        </li>
-        <li>
-          Tocca <strong>+</strong> → aggiungi l’azione{' '}
-          <strong>Apri URL</strong>.
-        </li>
-        <li>Incolla uno degli URL qui sotto (o quello della selezione attuale).</li>
-        <li>
-          Tocca <strong>⋯</strong> / dettagli → <strong>Aggiungi a Siri</strong> e
-          registra la frase, ad esempio «riproduci da JW canzoni».
-        </li>
-        <li>
-          Consigliato: in Safari, <strong>Condividi → Aggiungi a Home</strong>{' '}
-          così JW Ascolta si apre a schermo intero.
-        </li>
-      </ol>
-
-      <h2>Riproduci per titolo + continua</h2>
-      <p className="section-lede">
-        Puoi far partire un brano specifico: dopo finisce e prosegue da solo
-        con il resto della coda.
-      </p>
-      <ol className="steps">
-        <li>
-          Nuovo comando → azione <strong>Chiedi ogni volta</strong> (o «Chiedi
-          input») con domanda: «Quale brano?».
-        </li>
-        <li>
-          Azione <strong>URL</strong> / <strong>Apri URL</strong> con:
-        </li>
-      </ol>
-      <div className="url-box">
-        <p className="label">Modello (sostituisci TITOLO con la risposta)</p>
-        <code>{askUrl}</code>
+      <div className="url-box highlight">
+        <p className="label">Cosa dirai</p>
+        <p className="phrase" style={{ margin: 0 }}>
+          «Hey Siri, riproduci da JW»
+        </p>
         <p className="section-lede" style={{ margin: 0 }}>
-          In Comandi: usa «URL» con testo + variabile della risposta al posto di{' '}
-          <code style={{ display: 'inline' }}>TITOLO</code>, poi «Apri URL».
-          Aggiungi a Siri come «riproduci da JW». Quando lo dici, Siri chiede il
-          titolo e parte da lì.
+          Siri chiede: «Quale brano?» → rispondi ad esempio «Sorgerà» → parte
+          quel brano e poi prosegue.
+        </p>
+      </div>
+
+      <h2>Configurazione (un comando per tutti)</h2>
+      <ol className="steps">
+        <li>
+          Apri l’app <strong>Comandi</strong> su iPhone → <strong>+</strong>.
+        </li>
+        <li>
+          Aggiungi l’azione <strong>Chiedi ogni volta</strong> (cerca «Chiedi»).
+          Domanda: <strong>Quale brano?</strong>
+        </li>
+        <li>
+          Aggiungi l’azione <strong>URL</strong>. Nel campo URL incolla questa
+          base e, subito dopo, inserisci la variabile della risposta (tasto
+          Variabile → «Chiedi ogni volta» / Testo fornito):
+        </li>
+      </ol>
+
+      <div className="url-box">
+        <p className="label">Base URL (poi attacca la variabile del titolo)</p>
+        <code>{titleBase}</code>
+        <button
+          className="btn primary"
+          onClick={() => void navigator.clipboard?.writeText(titleBase)}
+        >
+          Copia base URL
+        </button>
+      </div>
+
+      <ol className="steps" start={4}>
+        <li>
+          Aggiungi <strong>Apri URL</strong> e collega l’URL creato sopra.
+        </li>
+        <li>
+          Tocca <strong>⋯</strong> in alto → <strong>Aggiungi a Siri</strong> →
+          registra la frase: <strong>riproduci da JW</strong>.
+        </li>
+        <li>
+          (Consigliato) In Safari apri JW Ascolta → Condividi →{' '}
+          <strong>Aggiungi a Home</strong>.
+        </li>
+      </ol>
+
+      <div className="url-box">
+        <p className="label">Esempio già completo (solo Sorgerà)</p>
+        <code>{titleExample}</code>
+        <p className="section-lede" style={{ margin: 0 }}>
+          Utile per un comando fisso su un solo titolo. Per tutti i brani usa
+          invece la base URL + variabile qui sopra.
         </p>
         <button
-          className="btn primary"
-          onClick={() => void navigator.clipboard?.writeText(askUrl)}
+          className="btn ghost"
+          onClick={() => void navigator.clipboard?.writeText(titleExample)}
         >
-          Copia modello
+          Copia esempio Sorgerà
         </button>
       </div>
 
-      <div className="url-box">
-        <p className="label">URL della selezione attuale</p>
-        <code>{shareUrl}</code>
-        <button
-          className="btn primary"
-          onClick={() => void navigator.clipboard?.writeText(shareUrl)}
-        >
-          Copia URL
-        </button>
-      </div>
-
-      <h2>Esempi pronti</h2>
+      <h2>Altri comandi (per sezione)</h2>
+      <p className="section-lede">
+        Se vuoi comandi senza chiedere il titolo, usa questi URL fissi.
+      </p>
       <ul className="examples">
-        {examples.map((ex) => (
+        {otherExamples.map((ex) => (
           <li key={ex.phrase}>
             <p className="phrase">«{ex.phrase}»</p>
             <code>{ex.url}</code>
-            {'note' in ex && ex.note ? (
-              <p className="section-lede" style={{ margin: 0 }}>
-                {ex.note}
-              </p>
-            ) : null}
             <button
               className="btn ghost small"
               onClick={() => void navigator.clipboard?.writeText(ex.url)}
@@ -646,10 +642,20 @@ function SiriGuide({
         ))}
       </ul>
 
+      <div className="url-box">
+        <p className="label">URL della selezione attuale in app</p>
+        <code>{shareUrl}</code>
+        <button
+          className="btn ghost"
+          onClick={() => void navigator.clipboard?.writeText(shareUrl)}
+        >
+          Copia URL
+        </button>
+      </div>
+
       <p className="note">
-        Su iOS, se l’audio non parte da solo, tocca una volta Riproduci: Safari
-        richiede spesso un gesto. Dopo il primo avvio, i controlli funzionano
-        anche dalla schermata di blocco.
+        Se l’audio non parte da solo su iPhone, tocca una volta ▶. Poi i
+        controlli funzionano anche dalla schermata di blocco.
       </p>
     </main>
   )
