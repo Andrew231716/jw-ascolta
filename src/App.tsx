@@ -44,12 +44,17 @@ function readQuery() {
     params.get('brano') ||
     params.get('canzone') ||
     ''
+  const siriFocus =
+    params.get('siri') === '1' ||
+    params.get('focus') === '1' ||
+    (autoplay && Boolean(title.trim()))
   return {
     sections: resolveSectionInput(sectionsRaw || 'tutto'),
     mode: resolvedMode,
     autoplay,
     view: view as View,
     title: title.trim(),
+    siriFocus,
   }
 }
 
@@ -80,6 +85,7 @@ export default function App() {
   const [queueExpanded, setQueueExpanded] = useState(false)
   const [titleQuery, setTitleQuery] = useState(initial.title)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
+  const [siriFocus, setSiriFocus] = useState(initial.siriFocus)
   const player = useAudioPlayer()
   const autoplayStarted = useRef(false)
 
@@ -135,7 +141,9 @@ export default function App() {
       else url.searchParams.delete('title')
       if (autoplay) url.searchParams.set('play', '1')
       else url.searchParams.delete('play')
+      if (siriFocus || matchedTitle) url.searchParams.set('siri', '1')
       window.history.replaceState({}, '', url)
+      if (matchedTitle) setSiriFocus(true)
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Errore di rete')
     } finally {
@@ -200,7 +208,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className={siriFocus ? 'app siri-focus' : 'app'}>
       <Atmosphere />
 
       {player.needsGesture && player.current && (
@@ -213,37 +221,51 @@ export default function App() {
           <span className="gesture-title">Tocca per ascoltare</span>
           <span className="gesture-sub">{player.current.title}</span>
           <span className="gesture-hint">
-            Safari blocca l’autoplay da Siri: un tap e parte.
+            iPhone blocca l’audio automatico da Siri. Un tap e continua anche
+            coi brani successivi.
           </span>
         </button>
       )}
 
-      <nav className="top-nav" aria-label="Navigazione">
-        <button type="button" className="nav-link" onClick={openSiriGuide}>
-          Siri per titolo
-        </button>
-      </nav>
-
-      <header className="hero">
-        <p className="brand">JW Ascolta</p>
-        <h1 className="headline">Musica per lodare, quando vuoi.</h1>
-        <p className="lede">
-          Cantici, canzoni e musica internazionale da JW.org — in ordine, a
-          caso, per titolo, o con Siri.
-        </p>
-        <div className="cta-row">
-          <button
-            className="btn primary"
-            disabled={catalogLoading}
-            onClick={() => void startPlayback(['tutto'], 'shuffle', true)}
-          >
-            Riproduci tutto a caso
-          </button>
-          <button type="button" className="btn ghost" onClick={openSiriGuide}>
+      {!siriFocus && (
+        <nav className="top-nav" aria-label="Navigazione">
+          <button type="button" className="nav-link" onClick={openSiriGuide}>
             Siri per titolo
           </button>
-        </div>
-      </header>
+        </nav>
+      )}
+
+      {!siriFocus && (
+        <header className="hero">
+          <p className="brand">JW Ascolta</p>
+          <h1 className="headline">Musica per lodare, quando vuoi.</h1>
+          <p className="lede">
+            Cantici, canzoni e musica internazionale da JW.org — in ordine, a
+            caso, per titolo, o con Siri.
+          </p>
+          <div className="cta-row">
+            <button
+              className="btn primary"
+              disabled={catalogLoading}
+              onClick={() => void startPlayback(['tutto'], 'shuffle', true)}
+            >
+              Riproduci tutto a caso
+            </button>
+            <button type="button" className="btn ghost" onClick={openSiriGuide}>
+              Siri per titolo
+            </button>
+          </div>
+        </header>
+      )}
+
+      {siriFocus && (
+        <header className="siri-focus-bar">
+          <p className="brand compact">JW Ascolta</p>
+          <button type="button" className="nav-link" onClick={openSiriGuide}>
+            Guida Siri
+          </button>
+        </header>
+      )}
 
       <section className="now" aria-live="polite">
         {player.current ? (
@@ -318,6 +340,7 @@ export default function App() {
         )}
       </section>
 
+      {!siriFocus && (
       <section className="chooser" id="scegli">
         <h2>Sezioni</h2>
         <p className="section-lede">
@@ -422,12 +445,14 @@ export default function App() {
           </button>
         </div>
       </section>
+      )}
 
+      {!siriFocus && (
       <section className="siri-teaser" id="siri">
         <h2>Siri · riproduci per titolo</h2>
         <p className="section-lede">
-          Usa <strong>Dettatura testo</strong> (non «Chiedi ogni volta», che
-          spesso non capisce i titoli). Guida aggiornata con i passaggi giusti.
+          Usa <strong>Mostra pagina web</strong> (non Apri URL/Chrome) e{' '}
+          <strong>Dettatura testo</strong>. Guida aggiornata sotto.
         </p>
         <div className="cta-row">
           <button type="button" className="btn primary" onClick={openSiriGuide}>
@@ -435,6 +460,7 @@ export default function App() {
           </button>
         </div>
       </section>
+      )}
 
       {player.playlist.length > 0 && (
         <section className="queue">
@@ -545,18 +571,14 @@ function SiriGuide({
   shareUrl: string
   onBack: () => void
 }) {
-  const origin = window.location.origin + window.location.pathname
-  const titleBase = `${origin}?s=tutto&mode=shuffle&play=1&title=`
+  const titleBase = `${window.location.origin}/?s=tutto&mode=shuffle&play=1&siri=1&title=`
+  const directPlayBase = `${window.location.origin}/api/play?title=`
   const titleExample = makeTitleExample('Sorgerà', 'tutto', 'shuffle')
 
   const otherExamples = [
     {
       phrase: 'Hey Siri, riproduci da JW canzoni',
       url: makeExample('canzoni', 'shuffle'),
-    },
-    {
-      phrase: 'Hey Siri, riproduci da JW musica internazionale',
-      url: makeExample('musica-internazionale', 'shuffle'),
     },
     {
       phrase: 'Hey Siri, riproduci da JW musica in modo casuale',
@@ -570,46 +592,52 @@ function SiriGuide({
         ← Indietro
       </button>
       <p className="brand">JW Ascolta</p>
-      <h1>Riproduci per titolo con Siri</h1>
+      <h1>Siri senza Chrome</h1>
       <p className="lede">
-        Un solo comando per tutti i brani. Dici il titolo, parte da lì e poi
-        continua da sola.
+        Se usi «Apri URL», iPhone apre Chrome (browser predefinito) e blocca
+        l’autoplay. Per evitare Chrome usa i passaggi sotto.
       </p>
 
       <div className="url-box highlight">
-        <p className="label">Se vedi «URL non valido: Sorger%C3%A0»</p>
+        <p className="label">Limite di iPhone (importante)</p>
         <p className="section-lede" style={{ margin: 0 }}>
-          Significa che <strong>Apri URL</strong> sta aprendo solo il titolo
-          codificato, non l’indirizzo completo. Non usare l’azione «URL» per
-          costruire il link: usa <strong>Testo</strong> come sotto, e in Apri
-          URL scegli la variabile <strong>Testo</strong> (quella lunga che
-          inizia con https), <em>non</em> «Testo codificato URL».
+          Nessuna app web può far partire l’audio da Siri senza un tap: è una
+          regola di Apple. Dopo Siri vedrai «Tocca per ascoltare»: un tocco e
+          poi va avanti da sola con il resto della coda.
         </p>
       </div>
 
-      <h2>Configurazione corretta (4 azioni)</h2>
+      <h2>1) Aggiungi l’app a Home (da Safari)</h2>
       <ol className="steps">
         <li>
-          Apri <strong>Comandi</strong> → elimina il vecchio comando o
-          ricrealo → <strong>+</strong>.
+          Apri <strong>Safari</strong> (non Chrome) →{' '}
+          <a href="https://jw-ascolta.vercel.app">jw-ascolta.vercel.app</a>
         </li>
         <li>
-          <strong>Dettatura testo</strong> (cerca «Dettatura»). Arresto dopo
-          una pausa.
+          Condividi → <strong>Aggiungi a Home</strong>
+        </li>
+      </ol>
+
+      <h2>2) Ricrea il comando (senza Apri URL)</h2>
+      <ol className="steps">
+        <li>
+          In <strong>Comandi</strong>, cancella il vecchio «Riproduci da JW» e
+          creane uno nuovo.
         </li>
         <li>
-          <strong>Codifica URL</strong> → input:{' '}
-          <strong>Testo dettato</strong>.
+          <strong>Dettatura testo</strong>
         </li>
         <li>
-          <strong>Testo</strong> (cerca «Testo», non «URL»). Incolla la base
-          qui sotto, poi subito dopo (senza spazio) inserisci la variabile{' '}
-          <strong>Testo codificato URL</strong>:
+          <strong>Codifica URL</strong> ← Testo dettato
+        </li>
+        <li>
+          <strong>Testo</strong> = base qui sotto + variabile{' '}
+          <strong>Testo codificato URL</strong> (attaccata subito dopo):
         </li>
       </ol>
 
       <div className="url-box">
-        <p className="label">Incolla questo all’inizio dell’azione Testo</p>
+        <p className="label">Base da mettere nell’azione Testo</p>
         <code>{titleBase}</code>
         <button
           className="btn primary"
@@ -621,48 +649,56 @@ function SiriGuide({
 
       <ol className="steps" start={5}>
         <li>
-          <strong>Apri URL</strong> → tocca il campo e scegli{' '}
-          <strong>Testo</strong> (deve essere tutto il link https://…). Se
-          compare solo «Testo codificato URL» / «Sorger%C3%A0», è sbagliato.
+          Aggiungi <strong>Mostra pagina web</strong> (cerca «Mostra pagina»),{' '}
+          <em>non</em> «Apri URL». Come input scegli <strong>Testo</strong>{' '}
+          (il link https completo).
         </li>
         <li>
-          <strong>⋯</strong> → <strong>Aggiungi a Siri</strong> → frase:{' '}
-          <strong>riproduci da JW</strong>.
+          In opzioni di «Mostra pagina web», se c’è «Safari» / visualizzazione,
+          lasciala attiva. Così resta dentro Comandi e <strong>non apre
+          Chrome</strong>.
+        </li>
+        <li>
+          <strong>Aggiungi a Siri</strong> → frase: <strong>riproduci da JW</strong>
         </li>
       </ol>
 
-      <div className="url-box">
-        <p className="label">Ordine finale delle azioni</p>
-        <p className="section-lede" style={{ margin: 0 }}>
-          1) Dettatura testo → 2) Codifica URL → 3) Testo (base + variabile) →
-          4) Apri URL (variabile Testo).
-        </p>
-      </div>
-
       <div className="url-box highlight">
-        <p className="label">Come usarlo</p>
-        <p className="phrase" style={{ margin: 0 }}>
-          «Hey Siri, riproduci da JW»
-        </p>
+        <p className="label">Ordine azioni</p>
         <p className="section-lede" style={{ margin: 0 }}>
-          Parte la dettatura → di’ il titolo (es. «Confido nel tuo amore
-          leale» o «Sorgerà») → si apre l’app. Se vedi «Tocca per ascoltare»,
-          un tap e parte (limite di Safari, non dell’app).
+          Dettatura testo → Codifica URL → Testo →{' '}
+          <strong>Mostra pagina web</strong> (variabile Testo).
         </p>
       </div>
 
+      <h2>3) Alternativa: solo 1 brano (spesso parte da solo)</h2>
+      <p className="section-lede">
+        Se ti basta un singolo brano (senza coda), apri direttamente l’MP3.
+        Spesso l’autoplay funziona meglio; non continua con gli altri.
+      </p>
       <div className="url-box">
-        <p className="label">Esempio fisso (solo Sorgerà)</p>
+        <p className="label">Base MP3 diretto (stesso schema Testo + Mostra/Apri)</p>
+        <code>{directPlayBase}</code>
+        <button
+          className="btn ghost"
+          onClick={() => void navigator.clipboard?.writeText(directPlayBase)}
+        >
+          Copia base MP3
+        </button>
+      </div>
+
+      <div className="url-box">
+        <p className="label">Esempio fisso Sorgerà (app + coda)</p>
         <code>{titleExample}</code>
         <button
           className="btn ghost"
           onClick={() => void navigator.clipboard?.writeText(titleExample)}
         >
-          Copia esempio Sorgerà
+          Copia
         </button>
       </div>
 
-      <h2>Altri comandi (per sezione)</h2>
+      <h2>Altri comandi</h2>
       <ul className="examples">
         {otherExamples.map((ex) => (
           <li key={ex.phrase}>
@@ -679,7 +715,7 @@ function SiriGuide({
       </ul>
 
       <div className="url-box">
-        <p className="label">URL della selezione attuale</p>
+        <p className="label">URL selezione attuale</p>
         <code>{shareUrl}</code>
         <button
           className="btn ghost"
@@ -706,5 +742,6 @@ function makeTitleExample(title: string, sections: string, mode: PlayMode) {
   url.searchParams.set('mode', mode)
   url.searchParams.set('title', title)
   url.searchParams.set('play', '1')
+  url.searchParams.set('siri', '1')
   return url.toString()
 }

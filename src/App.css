@@ -162,6 +162,31 @@ button {
   font-size: 0.9rem;
 }
 
+.app.siri-focus {
+  padding-top: 0.75rem;
+}
+
+.siri-focus-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.brand.compact {
+  margin: 0;
+  font-size: 1.55rem;
+}
+
+.app.siri-focus .now {
+  min-height: 50dvh;
+}
+
+.app.siri-focus .foot {
+  display: none;
+}
+
 .atmosphere {
   position: fixed;
   inset: 0;
