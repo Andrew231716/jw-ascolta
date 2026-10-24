@@ -577,36 +577,39 @@ function SiriGuide({
       </p>
 
       <div className="url-box highlight">
-        <p className="label">Importante: non usare «Chiedi ogni volta»</p>
+        <p className="label">Se vedi «URL non valido: Sorger%C3%A0»</p>
         <p className="section-lede" style={{ margin: 0 }}>
-          Con «Chiedi ogni volta» Siri spesso risponde «Mi dispiace, non ho
-          capito» sui titoli delle canzoni. Usa invece{' '}
-          <strong>Dettatura testo</strong> come sotto.
+          Significa che <strong>Apri URL</strong> sta aprendo solo il titolo
+          codificato, non l’indirizzo completo. Non usare l’azione «URL» per
+          costruire il link: usa <strong>Testo</strong> come sotto, e in Apri
+          URL scegli la variabile <strong>Testo</strong> (quella lunga che
+          inizia con https), <em>non</em> «Testo codificato URL».
         </p>
       </div>
 
-      <h2>Configurazione corretta</h2>
+      <h2>Configurazione corretta (4 azioni)</h2>
       <ol className="steps">
         <li>
-          Apri <strong>Comandi</strong> → <strong>+</strong> (nuovo comando).
+          Apri <strong>Comandi</strong> → elimina il vecchio comando o
+          ricrealo → <strong>+</strong>.
         </li>
         <li>
-          Aggiungi <strong>Dettatura testo</strong> (cerca «Dettatura»).
-          Lascia l’arresto automatico dopo una pausa.
+          <strong>Dettatura testo</strong> (cerca «Dettatura»). Arresto dopo
+          una pausa.
         </li>
         <li>
-          Aggiungi <strong>Codifica URL</strong> (cerca «Codifica»). Imposta
-          l’input sulla variabile <strong>Testo dettato</strong>.
+          <strong>Codifica URL</strong> → input:{' '}
+          <strong>Testo dettato</strong>.
         </li>
         <li>
-          Aggiungi <strong>URL</strong>. Incolla la base qui sotto, poi subito
-          dopo inserisci la variabile <strong>Testo codificato</strong> (o
-          Codifica URL):
+          <strong>Testo</strong> (cerca «Testo», non «URL»). Incolla la base
+          qui sotto, poi subito dopo (senza spazio) inserisci la variabile{' '}
+          <strong>Testo codificato URL</strong>:
         </li>
       </ol>
 
       <div className="url-box">
-        <p className="label">Base URL + variabile titolo (codificata)</p>
+        <p className="label">Incolla questo all’inizio dell’azione Testo</p>
         <code>{titleBase}</code>
         <button
           className="btn primary"
@@ -618,17 +621,23 @@ function SiriGuide({
 
       <ol className="steps" start={5}>
         <li>
-          Aggiungi <strong>Apri URL</strong> → usa l’URL creato al punto 4.
+          <strong>Apri URL</strong> → tocca il campo e scegli{' '}
+          <strong>Testo</strong> (deve essere tutto il link https://…). Se
+          compare solo «Testo codificato URL» / «Sorger%C3%A0», è sbagliato.
         </li>
         <li>
-          Tocca <strong>⋯</strong> → <strong>Aggiungi a Siri</strong> → frase:{' '}
+          <strong>⋯</strong> → <strong>Aggiungi a Siri</strong> → frase:{' '}
           <strong>riproduci da JW</strong>.
         </li>
-        <li>
-          In Safari: apri JW Ascolta → Condividi →{' '}
-          <strong>Aggiungi a Home</strong>.
-        </li>
       </ol>
+
+      <div className="url-box">
+        <p className="label">Ordine finale delle azioni</p>
+        <p className="section-lede" style={{ margin: 0 }}>
+          1) Dettatura testo → 2) Codifica URL → 3) Testo (base + variabile) →
+          4) Apri URL (variabile Testo).
+        </p>
+      </div>
 
       <div className="url-box highlight">
         <p className="label">Come usarlo</p>
