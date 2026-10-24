@@ -1,7 +1,5 @@
-/**
- * Resolves a title and 302-redirects to the MP3.
- * Useful for Siri Shortcuts that open the file directly (often autoplays better).
- */
+export const config = { runtime: 'edge' }
+
 export default async function handler(req: Request): Promise<Response> {
   const incoming = new URL(req.url)
   const title = incoming.searchParams.get('title') || ''

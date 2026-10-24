@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' }
+
 const SECTIONS = [
   'AudioOriginalSongs',
   'AudioInternationalMusic',
@@ -28,8 +30,8 @@ function normalizeTitle(raw: string): string {
     .trim()
     .toLowerCase()
     .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .replace(/[“”"'«»]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/["'`«»]/g, '')
     .replace(/^\d+[.\-) ]\s*/g, '')
     .replace(/[_+/]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -119,7 +121,7 @@ export default async function handler(req: Request): Promise<Response> {
       )
     }
 
-    const page = new URL('https://jw-ascolta.vercel.app/')
+    const page = new URL(url.origin)
     page.searchParams.set('s', 'tutto')
     page.searchParams.set('mode', 'shuffle')
     page.searchParams.set('play', '1')
