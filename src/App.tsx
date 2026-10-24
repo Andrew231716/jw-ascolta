@@ -203,6 +203,21 @@ export default function App() {
     <div className="app">
       <Atmosphere />
 
+      {player.needsGesture && player.current && (
+        <button
+          type="button"
+          className="gesture-overlay"
+          onClick={() => void player.resumeFromGesture()}
+        >
+          <span className="gesture-play">▶</span>
+          <span className="gesture-title">Tocca per ascoltare</span>
+          <span className="gesture-sub">{player.current.title}</span>
+          <span className="gesture-hint">
+            Safari blocca l’autoplay da Siri: un tap e parte.
+          </span>
+        </button>
+      )}
+
       <nav className="top-nav" aria-label="Navigazione">
         <button type="button" className="nav-link" onClick={openSiriGuide}>
           Siri per titolo
@@ -289,6 +304,11 @@ export default function App() {
                 </button>
               </div>
               {player.error && <p className="error">{player.error}</p>}
+              {player.needsGesture && (
+                <p className="gesture-inline">
+                  Tocca ▶ qui sopra oppure il pulsante grande per avviare.
+                </p>
+              )}
             </div>
           </>
         ) : (
@@ -406,8 +426,8 @@ export default function App() {
       <section className="siri-teaser" id="siri">
         <h2>Siri · riproduci per titolo</h2>
         <p className="section-lede">
-          Un solo comando per tutti i brani: dici «riproduci da JW», Siri chiede
-          il titolo (es. Sorgerà), parte da lì e continua da sola con il resto.
+          Usa <strong>Dettatura testo</strong> (non «Chiedi ogni volta», che
+          spesso non capisce i titoli). Guida aggiornata con i passaggi giusti.
         </p>
         <div className="cta-row">
           <button type="button" className="btn primary" onClick={openSiriGuide}>
@@ -553,38 +573,40 @@ function SiriGuide({
       <h1>Riproduci per titolo con Siri</h1>
       <p className="lede">
         Un solo comando per tutti i brani. Dici il titolo, parte da lì e poi
-        continua da sola con il resto della coda.
+        continua da sola.
       </p>
 
       <div className="url-box highlight">
-        <p className="label">Cosa dirai</p>
-        <p className="phrase" style={{ margin: 0 }}>
-          «Hey Siri, riproduci da JW»
-        </p>
+        <p className="label">Importante: non usare «Chiedi ogni volta»</p>
         <p className="section-lede" style={{ margin: 0 }}>
-          Siri chiede: «Quale brano?» → rispondi ad esempio «Sorgerà» → parte
-          quel brano e poi prosegue.
+          Con «Chiedi ogni volta» Siri spesso risponde «Mi dispiace, non ho
+          capito» sui titoli delle canzoni. Usa invece{' '}
+          <strong>Dettatura testo</strong> come sotto.
         </p>
       </div>
 
-      <h2>Configurazione (un comando per tutti)</h2>
+      <h2>Configurazione corretta</h2>
       <ol className="steps">
         <li>
-          Apri l’app <strong>Comandi</strong> su iPhone → <strong>+</strong>.
+          Apri <strong>Comandi</strong> → <strong>+</strong> (nuovo comando).
         </li>
         <li>
-          Aggiungi l’azione <strong>Chiedi ogni volta</strong> (cerca «Chiedi»).
-          Domanda: <strong>Quale brano?</strong>
+          Aggiungi <strong>Dettatura testo</strong> (cerca «Dettatura»).
+          Lascia l’arresto automatico dopo una pausa.
         </li>
         <li>
-          Aggiungi l’azione <strong>URL</strong>. Nel campo URL incolla questa
-          base e, subito dopo, inserisci la variabile della risposta (tasto
-          Variabile → «Chiedi ogni volta» / Testo fornito):
+          Aggiungi <strong>Codifica URL</strong> (cerca «Codifica»). Imposta
+          l’input sulla variabile <strong>Testo dettato</strong>.
+        </li>
+        <li>
+          Aggiungi <strong>URL</strong>. Incolla la base qui sotto, poi subito
+          dopo inserisci la variabile <strong>Testo codificato</strong> (o
+          Codifica URL):
         </li>
       </ol>
 
       <div className="url-box">
-        <p className="label">Base URL (poi attacca la variabile del titolo)</p>
+        <p className="label">Base URL + variabile titolo (codificata)</p>
         <code>{titleBase}</code>
         <button
           className="btn primary"
@@ -594,27 +616,35 @@ function SiriGuide({
         </button>
       </div>
 
-      <ol className="steps" start={4}>
+      <ol className="steps" start={5}>
         <li>
-          Aggiungi <strong>Apri URL</strong> e collega l’URL creato sopra.
+          Aggiungi <strong>Apri URL</strong> → usa l’URL creato al punto 4.
         </li>
         <li>
-          Tocca <strong>⋯</strong> in alto → <strong>Aggiungi a Siri</strong> →
-          registra la frase: <strong>riproduci da JW</strong>.
+          Tocca <strong>⋯</strong> → <strong>Aggiungi a Siri</strong> → frase:{' '}
+          <strong>riproduci da JW</strong>.
         </li>
         <li>
-          (Consigliato) In Safari apri JW Ascolta → Condividi →{' '}
+          In Safari: apri JW Ascolta → Condividi →{' '}
           <strong>Aggiungi a Home</strong>.
         </li>
       </ol>
 
-      <div className="url-box">
-        <p className="label">Esempio già completo (solo Sorgerà)</p>
-        <code>{titleExample}</code>
-        <p className="section-lede" style={{ margin: 0 }}>
-          Utile per un comando fisso su un solo titolo. Per tutti i brani usa
-          invece la base URL + variabile qui sopra.
+      <div className="url-box highlight">
+        <p className="label">Come usarlo</p>
+        <p className="phrase" style={{ margin: 0 }}>
+          «Hey Siri, riproduci da JW»
         </p>
+        <p className="section-lede" style={{ margin: 0 }}>
+          Parte la dettatura → di’ il titolo (es. «Confido nel tuo amore
+          leale» o «Sorgerà») → si apre l’app. Se vedi «Tocca per ascoltare»,
+          un tap e parte (limite di Safari, non dell’app).
+        </p>
+      </div>
+
+      <div className="url-box">
+        <p className="label">Esempio fisso (solo Sorgerà)</p>
+        <code>{titleExample}</code>
         <button
           className="btn ghost"
           onClick={() => void navigator.clipboard?.writeText(titleExample)}
@@ -624,9 +654,6 @@ function SiriGuide({
       </div>
 
       <h2>Altri comandi (per sezione)</h2>
-      <p className="section-lede">
-        Se vuoi comandi senza chiedere il titolo, usa questi URL fissi.
-      </p>
       <ul className="examples">
         {otherExamples.map((ex) => (
           <li key={ex.phrase}>
@@ -643,7 +670,7 @@ function SiriGuide({
       </ul>
 
       <div className="url-box">
-        <p className="label">URL della selezione attuale in app</p>
+        <p className="label">URL della selezione attuale</p>
         <code>{shareUrl}</code>
         <button
           className="btn ghost"
@@ -652,11 +679,6 @@ function SiriGuide({
           Copia URL
         </button>
       </div>
-
-      <p className="note">
-        Se l’audio non parte da solo su iPhone, tocca una volta ▶. Poi i
-        controlli funzionano anche dalla schermata di blocco.
-      </p>
     </main>
   )
 }

@@ -9,6 +9,8 @@ export interface PlayerState {
   error: string | null
   currentTime: number
   duration: number
+  /** True when browser blocked autoplay; waiting for a tap */
+  needsGesture: boolean
 }
 
 const initial: PlayerState = {
@@ -19,6 +21,7 @@ const initial: PlayerState = {
   error: null,
   currentTime: 0,
   duration: 0,
+  needsGesture: false,
 }
 
 export function useAudioPlayer() {
@@ -26,10 +29,14 @@ export function useAudioPlayer() {
   const [state, setState] = useState<PlayerState>(initial)
   const playlistRef = useRef<Track[]>([])
   const indexRef = useRef(0)
+  const needsGestureRef = useRef(false)
 
   useEffect(() => {
     const audio = new Audio()
     audio.preload = 'auto'
+    audio.setAttribute('playsinline', 'true')
+    audio.setAttribute('webkit-playsinline', 'true')
+    ;(audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true
     audioRef.current = audio
 
     const onTime = () =>
@@ -38,7 +45,16 @@ export function useAudioPlayer() {
         currentTime: audio.currentTime,
         duration: audio.duration || s.duration,
       }))
-    const onPlay = () => setState((s) => ({ ...s, playing: true, loading: false }))
+    const onPlay = () => {
+      needsGestureRef.current = false
+      setState((s) => ({
+        ...s,
+        playing: true,
+        loading: false,
+        needsGesture: false,
+        error: null,
+      }))
+    }
     const onPause = () => setState((s) => ({ ...s, playing: false }))
     const onWaiting = () => setState((s) => ({ ...s, loading: true }))
     const onCanPlay = () => setState((s) => ({ ...s, loading: false }))
@@ -72,10 +88,12 @@ export function useAudioPlayer() {
   const loadAndPlay = useEffectEvent(async (track: Track, autoplay: boolean) => {
     const audio = audioRef.current
     if (!audio) return
+    needsGestureRef.current = false
     setState((s) => ({
       ...s,
       loading: true,
       error: null,
+      needsGesture: false,
       currentTime: 0,
       duration: track.duration || 0,
     }))
@@ -86,11 +104,13 @@ export function useAudioPlayer() {
       try {
         await audio.play()
       } catch {
+        needsGestureRef.current = true
         setState((s) => ({
           ...s,
           loading: false,
           playing: false,
-          error: 'Tocca ▶ per avviare l’audio (blocco autoplay del browser).',
+          needsGesture: true,
+          error: null,
         }))
       }
     } else {
@@ -141,6 +161,32 @@ export function useAudioPlayer() {
     navigator.mediaSession.setActionHandler('nexttrack', () => playNext())
   }, [playNext, playPrev])
 
+  // Any first tap/key while waiting for gesture unlocks audio (Siri → Safari).
+  useEffect(() => {
+    const tryUnlock = () => {
+      if (!needsGestureRef.current) return
+      const audio = audioRef.current
+      if (!audio) return
+      void audio
+        .play()
+        .then(() => {
+          needsGestureRef.current = false
+        })
+        .catch(() => {
+          /* keep overlay */
+        })
+    }
+    const opts: AddEventListenerOptions = { capture: true, passive: true }
+    window.addEventListener('pointerdown', tryUnlock, opts)
+    window.addEventListener('touchend', tryUnlock, opts)
+    window.addEventListener('keydown', tryUnlock, opts)
+    return () => {
+      window.removeEventListener('pointerdown', tryUnlock, opts)
+      window.removeEventListener('touchend', tryUnlock, opts)
+      window.removeEventListener('keydown', tryUnlock, opts)
+    }
+  }, [])
+
   async function setPlaylist(
     tracks: Track[],
     autoplay: boolean,
@@ -167,14 +213,31 @@ export function useAudioPlayer() {
     if (audio.paused) {
       try {
         await audio.play()
+        needsGestureRef.current = false
+        setState((s) => ({ ...s, needsGesture: false, error: null }))
       } catch {
+        needsGestureRef.current = true
         setState((s) => ({
           ...s,
-          error: 'Impossibile avviare la riproduzione.',
+          needsGesture: true,
+          error: null,
         }))
       }
     } else {
       audio.pause()
+    }
+  }
+
+  async function resumeFromGesture() {
+    const audio = audioRef.current
+    if (!audio) return false
+    try {
+      await audio.play()
+      needsGestureRef.current = false
+      setState((s) => ({ ...s, needsGesture: false, error: null }))
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -192,7 +255,6 @@ export function useAudioPlayer() {
     void loadAndPlay(list[index], true)
   }
 
-  /** Reorder queue. Keeps the current track playing if its position changes. */
   function moveTrack(from: number, to: number) {
     const list = [...playlistRef.current]
     if (
@@ -234,6 +296,7 @@ export function useAudioPlayer() {
     jumpTo,
     moveTrack,
     moveTrackBy,
+    resumeFromGesture,
   }
 }
 
