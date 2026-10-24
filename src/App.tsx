@@ -175,19 +175,26 @@ export default function App() {
   const shareUrl = buildShareUrl(effectiveSlugs, mode, titleQuery)
   const visibleCount = queueExpanded ? player.playlist.length : 40
 
+  function openSiriGuide() {
+    setView('siri')
+    const url = new URL(window.location.href)
+    url.searchParams.set('view', 'siri')
+    window.history.replaceState({}, '', url)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function closeSiriGuide() {
+    setView('home')
+    const url = new URL(window.location.href)
+    url.searchParams.delete('view')
+    window.history.replaceState({}, '', url)
+  }
+
   if (view === 'siri') {
     return (
       <div className="app">
         <Atmosphere />
-        <SiriGuide
-          shareUrl={shareUrl}
-          onBack={() => {
-            setView('home')
-            const url = new URL(window.location.href)
-            url.searchParams.delete('view')
-            window.history.replaceState({}, '', url)
-          }}
-        />
+        <SiriGuide shareUrl={shareUrl} onBack={closeSiriGuide} />
       </div>
     )
   }
@@ -195,6 +202,12 @@ export default function App() {
   return (
     <div className="app">
       <Atmosphere />
+
+      <nav className="top-nav" aria-label="Navigazione">
+        <button type="button" className="nav-link" onClick={openSiriGuide}>
+          Guida Siri
+        </button>
+      </nav>
 
       <header className="hero">
         <p className="brand">JW Ascolta</p>
@@ -211,9 +224,9 @@ export default function App() {
           >
             Riproduci tutto a caso
           </button>
-          <a className="btn ghost" href="#scegli">
-            Scegli sezioni
-          </a>
+          <button type="button" className="btn ghost" onClick={openSiriGuide}>
+            Guida comandi Siri
+          </button>
         </div>
       </header>
 
@@ -384,8 +397,21 @@ export default function App() {
           >
             {catalogLoading ? 'Carico…' : 'Riproduci selezione'}
           </button>
-          <button className="btn ghost" onClick={() => setView('siri')}>
-            Comandi Siri
+          <button type="button" className="btn ghost" onClick={openSiriGuide}>
+            Guida comandi Siri
+          </button>
+        </div>
+      </section>
+
+      <section className="siri-teaser" id="siri">
+        <h2>Comandi Siri</h2>
+        <p className="section-lede">
+          Un solo comando per tutti i brani: Siri chiede il titolo, parte da lì
+          e continua da sola. Apri la guida per i passaggi e gli URL pronti.
+        </p>
+        <div className="cta-row">
+          <button type="button" className="btn primary" onClick={openSiriGuide}>
+            Apri guida Siri
           </button>
         </div>
       </section>
@@ -471,6 +497,11 @@ export default function App() {
             JW.org
           </a>
           . Uso personale. Non affiliato a Watch Tower.
+        </p>
+        <p>
+          <button type="button" className="foot-link" onClick={openSiriGuide}>
+            Guida comandi Siri
+          </button>
         </p>
       </footer>
     </div>
