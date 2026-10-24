@@ -400,19 +400,64 @@ button {
   overflow: auto;
 }
 
+.queue-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.35rem;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 0.15rem 0;
+}
+
+.queue-row.active .q-title {
+  color: var(--gold);
+}
+
+.queue-row.dragging {
+  opacity: 0.55;
+  background: rgba(212, 164, 90, 0.08);
+}
+
+.drag-handle {
+  color: var(--muted);
+  cursor: grab;
+  padding: 0.4rem 0.35rem;
+  user-select: none;
+  letter-spacing: -0.12em;
+  font-size: 0.85rem;
+}
+
 .queue-item {
   width: 100%;
   text-align: left;
   border: 0;
-  border-bottom: 1px solid var(--line);
   background: transparent;
   color: inherit;
-  padding: 0.7rem 0.2rem;
+  padding: 0.55rem 0.2rem;
   cursor: pointer;
 }
 
-.queue-item.active .q-title {
-  color: var(--gold);
+.queue-move {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.move-btn {
+  width: 32px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+}
+
+.move-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 .q-title {
@@ -425,6 +470,43 @@ button {
   color: var(--muted);
   font-size: 0.78rem;
   margin-top: 0.15rem;
+}
+
+.title-search {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+
+.title-search > span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.title-row input {
+  flex: 1 1 180px;
+  min-width: 0;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  padding: 0.75rem 1rem;
+  font: inherit;
+}
+
+.title-row input::placeholder {
+  color: rgba(232, 242, 240, 0.4);
+}
+
+.title-row input:focus {
+  outline: 1px solid rgba(212, 164, 90, 0.55);
+  border-color: rgba(212, 164, 90, 0.45);
 }
 
 .foot {

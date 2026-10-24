@@ -272,6 +272,67 @@ export function buildPlaylist(tracks: Track[], mode: PlayMode): Track[] {
   return copy
 }
 
+/** Strip punctuation / numbering noise for title matching. */
+export function normalizeTitle(raw: string): string {
+  return normalizeAlias(raw)
+    .replace(/[“”"'«»]/g, '')
+    .replace(/^\d+[.\-) ]\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Find the best matching track index for a spoken/typed title.
+ * Prefers exact match, then prefix, then substring, then loose token overlap.
+ */
+export function findTrackIndexByTitle(
+  tracks: Track[],
+  rawTitle: string,
+): number {
+  const query = normalizeTitle(rawTitle)
+  if (!query || tracks.length === 0) return -1
+
+  let best = -1
+  let bestScore = 0
+
+  for (let i = 0; i < tracks.length; i += 1) {
+    const title = normalizeTitle(tracks[i].title)
+    if (!title) continue
+
+    let score = 0
+    if (title === query) score = 100
+    else if (title.startsWith(query) || query.startsWith(title)) score = 80
+    else if (title.includes(query) || query.includes(title)) score = 60
+    else {
+      const qTokens = query.split(' ').filter((t) => t.length > 2)
+      const tTokens = new Set(title.split(' ').filter((t) => t.length > 2))
+      if (qTokens.length) {
+        const hits = qTokens.filter((t) => tTokens.has(t)).length
+        score = (hits / qTokens.length) * 50
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score
+      best = i
+    }
+  }
+
+  return bestScore >= 40 ? best : -1
+}
+
+/** Put matched track first, then the rest of the playlist (continues after). */
+export function playlistStartingAtTitle(
+  tracks: Track[],
+  rawTitle: string,
+): { playlist: Track[]; matched: Track | null } {
+  const idx = findTrackIndexByTitle(tracks, rawTitle)
+  if (idx < 0) return { playlist: tracks, matched: null }
+  const matched = tracks[idx]
+  const rest = tracks.filter((_, i) => i !== idx)
+  return { playlist: [matched, ...rest], matched }
+}
+
 export function formatDuration(seconds: number): string {
   if (!seconds || !Number.isFinite(seconds)) return '0:00'
   const m = Math.floor(seconds / 60)

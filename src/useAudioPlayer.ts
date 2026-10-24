@@ -141,16 +141,24 @@ export function useAudioPlayer() {
     navigator.mediaSession.setActionHandler('nexttrack', () => playNext())
   }, [playNext, playPrev])
 
-  async function setPlaylist(tracks: Track[], autoplay: boolean) {
+  async function setPlaylist(
+    tracks: Track[],
+    autoplay: boolean,
+    startIndex = 0,
+  ) {
+    const safeIndex =
+      tracks.length === 0
+        ? 0
+        : Math.max(0, Math.min(startIndex, tracks.length - 1))
     playlistRef.current = tracks
-    indexRef.current = 0
+    indexRef.current = safeIndex
     setState((s) => ({
       ...s,
       playlist: tracks,
-      index: 0,
+      index: safeIndex,
       error: tracks.length ? null : 'Nessun brano trovato per le sezioni scelte.',
     }))
-    if (tracks[0]) await loadAndPlay(tracks[0], autoplay)
+    if (tracks[safeIndex]) await loadAndPlay(tracks[safeIndex], autoplay)
   }
 
   async function toggle() {
@@ -184,6 +192,35 @@ export function useAudioPlayer() {
     void loadAndPlay(list[index], true)
   }
 
+  /** Reorder queue. Keeps the current track playing if its position changes. */
+  function moveTrack(from: number, to: number) {
+    const list = [...playlistRef.current]
+    if (
+      from === to ||
+      from < 0 ||
+      to < 0 ||
+      from >= list.length ||
+      to >= list.length
+    ) {
+      return
+    }
+    const [item] = list.splice(from, 1)
+    list.splice(to, 0, item)
+
+    let nextIndex = indexRef.current
+    if (from === nextIndex) nextIndex = to
+    else if (from < nextIndex && to >= nextIndex) nextIndex -= 1
+    else if (from > nextIndex && to <= nextIndex) nextIndex += 1
+
+    playlistRef.current = list
+    indexRef.current = nextIndex
+    setState((s) => ({ ...s, playlist: list, index: nextIndex }))
+  }
+
+  function moveTrackBy(from: number, delta: number) {
+    moveTrack(from, from + delta)
+  }
+
   const current = state.playlist[state.index] ?? null
 
   return {
@@ -195,6 +232,8 @@ export function useAudioPlayer() {
     playPrev,
     seek,
     jumpTo,
+    moveTrack,
+    moveTrackBy,
   }
 }
 

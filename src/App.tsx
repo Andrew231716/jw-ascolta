@@ -5,6 +5,7 @@ import {
   fetchTracksForSlugs,
   formatDuration,
   parsePlayMode,
+  playlistStartingAtTitle,
   resolveSectionInput,
   type PlayMode,
   type SectionSlug,
@@ -25,7 +26,6 @@ function readQuery() {
   const mode = parsePlayMode(
     params.get('mode') || params.get('ordine') || params.get('shuffle'),
   )
-  // shuffle=1 legacy
   const shuffleParam = params.get('shuffle')
   const resolvedMode: PlayMode =
     shuffleParam === '0' || shuffleParam === 'false'
@@ -38,21 +38,33 @@ function readQuery() {
     params.get('autoplay') === '1' ||
     params.get('play') === 'true'
   const view = params.get('view') === 'siri' ? 'siri' : 'home'
+  const title =
+    params.get('title') ||
+    params.get('t') ||
+    params.get('brano') ||
+    params.get('canzone') ||
+    ''
   return {
     sections: resolveSectionInput(sectionsRaw || 'tutto'),
     mode: resolvedMode,
     autoplay,
     view: view as View,
+    title: title.trim(),
   }
 }
 
-function buildShareUrl(sections: SectionSlug[], mode: PlayMode) {
+function buildShareUrl(
+  sections: SectionSlug[],
+  mode: PlayMode,
+  title?: string,
+) {
   const url = new URL(window.location.href)
   url.search = ''
   const s = sections.includes('tutto') ? 'tutto' : sections.join(',')
   url.searchParams.set('s', s)
   url.searchParams.set('mode', mode)
   url.searchParams.set('play', '1')
+  if (title?.trim()) url.searchParams.set('title', title.trim())
   return url.toString()
 }
 
@@ -66,6 +78,8 @@ export default function App() {
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [queueExpanded, setQueueExpanded] = useState(false)
+  const [titleQuery, setTitleQuery] = useState(initial.title)
+  const [dragFrom, setDragFrom] = useState<number | null>(null)
   const player = useAudioPlayer()
   const autoplayStarted = useRef(false)
 
@@ -79,24 +93,46 @@ export default function App() {
     slugs: SectionSlug[],
     playMode: PlayMode,
     autoplay: boolean,
+    startTitle?: string,
   ) {
     setCatalogLoading(true)
     setStatus('Carico il catalogo da JW.org…')
     try {
       const tracks = await fetchTracksForSlugs(slugs)
-      const playlist = buildPlaylist(tracks, playMode)
+      let playlist = buildPlaylist(tracks, playMode)
+      let matchedTitle: string | null = null
+
+      if (startTitle?.trim()) {
+        const { playlist: ordered, matched } = playlistStartingAtTitle(
+          playlist,
+          startTitle,
+        )
+        if (!matched) {
+          setStatus(`Brano non trovato: «${startTitle.trim()}»`)
+          await player.setPlaylist([], false)
+          return
+        }
+        playlist = ordered
+        matchedTitle = matched.title
+      }
+
       setStatus(
         playlist.length
-          ? `${playlist.length} brani · ${playMode === 'shuffle' ? 'casuale' : 'in ordine'}`
+          ? matchedTitle
+            ? `Da «${matchedTitle}» · ${playlist.length} brani · poi continua`
+            : `${playlist.length} brani · ${playMode === 'shuffle' ? 'casuale' : 'in ordine'}`
           : null,
       )
-      await player.setPlaylist(playlist, autoplay)
+      await player.setPlaylist(playlist, autoplay, 0)
+
       const url = new URL(window.location.href)
       url.searchParams.set(
         's',
         slugs.includes('tutto') ? 'tutto' : slugs.join(','),
       )
       url.searchParams.set('mode', playMode)
+      if (matchedTitle) url.searchParams.set('title', matchedTitle)
+      else url.searchParams.delete('title')
       if (autoplay) url.searchParams.set('play', '1')
       else url.searchParams.delete('play')
       window.history.replaceState({}, '', url)
@@ -110,10 +146,14 @@ export default function App() {
   useEffect(() => {
     if (!initial.autoplay || autoplayStarted.current) return
     autoplayStarted.current = true
-    void startPlayback(initial.sections, initial.mode, true)
-    // startPlayback is stable enough for one-shot deep-link boot
+    void startPlayback(
+      initial.sections,
+      initial.mode,
+      true,
+      initial.title || undefined,
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initial.autoplay, initial.mode, initial.sections])
+  }, [initial.autoplay, initial.mode, initial.sections, initial.title])
 
   function toggleSection(slug: SectionSlug) {
     if (slug === 'tutto') {
@@ -132,7 +172,8 @@ export default function App() {
 
   const progress =
     player.duration > 0 ? player.currentTime / player.duration : 0
-  const shareUrl = buildShareUrl(effectiveSlugs, mode)
+  const shareUrl = buildShareUrl(effectiveSlugs, mode, titleQuery)
+  const visibleCount = queueExpanded ? player.playlist.length : 40
 
   if (view === 'siri') {
     return (
@@ -160,7 +201,7 @@ export default function App() {
         <h1 className="headline">Musica per lodare, quando vuoi.</h1>
         <p className="lede">
           Cantici, canzoni e musica internazionale da JW.org — in ordine, a
-          caso, o con Siri.
+          caso, per titolo, o con Siri.
         </p>
         <div className="cta-row">
           <button
@@ -247,8 +288,45 @@ export default function App() {
       <section className="chooser" id="scegli">
         <h2>Sezioni</h2>
         <p className="section-lede">
-          Seleziona una o più sezioni, poi scegli casuale o in ordine.
+          Seleziona una o più sezioni, oppure avvia da un titolo: poi continua
+          da solo con il resto della coda.
         </p>
+
+        <label className="title-search">
+          <span>Avvia da titolo</span>
+          <div className="title-row">
+            <input
+              type="search"
+              placeholder="es. Sorgerà"
+              value={titleQuery}
+              onChange={(e) => setTitleQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && titleQuery.trim()) {
+                  void startPlayback(
+                    effectiveSlugs,
+                    mode,
+                    true,
+                    titleQuery.trim(),
+                  )
+                }
+              }}
+            />
+            <button
+              className="btn primary"
+              disabled={catalogLoading || !titleQuery.trim()}
+              onClick={() =>
+                void startPlayback(
+                  effectiveSlugs,
+                  mode,
+                  true,
+                  titleQuery.trim(),
+                )
+              }
+            >
+              Riproduci titolo
+            </button>
+          </div>
+        </label>
 
         <div className="mode-toggle" role="group" aria-label="Modalità">
           <button
@@ -296,7 +374,12 @@ export default function App() {
             className="btn primary"
             disabled={catalogLoading}
             onClick={() =>
-              void startPlayback(effectiveSlugs, mode, true)
+              void startPlayback(
+                effectiveSlugs,
+                mode,
+                true,
+                titleQuery.trim() || undefined,
+              )
             }
           >
             {catalogLoading ? 'Carico…' : 'Riproduci selezione'}
@@ -310,14 +393,35 @@ export default function App() {
       {player.playlist.length > 0 && (
         <section className="queue">
           <h2>In coda · {player.playlist.length}</h2>
+          <p className="section-lede">
+            Trascina i brani o usa ↑ ↓ per cambiare ordine. La riproduzione
+            continua da sola dopo il brano corrente.
+          </p>
           <ul>
-            {(queueExpanded
-              ? player.playlist
-              : player.playlist.slice(0, 40)
-            ).map((t, i) => (
-              <li key={`${t.id}-${i}`}>
+            {player.playlist.slice(0, visibleCount).map((t, i) => (
+              <li
+                key={`${t.id}-${i}`}
+                className={
+                  dragFrom === i
+                    ? 'queue-row dragging'
+                    : i === player.index
+                      ? 'queue-row active'
+                      : 'queue-row'
+                }
+                draggable
+                onDragStart={() => setDragFrom(i)}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={() => {
+                  if (dragFrom !== null) player.moveTrack(dragFrom, i)
+                  setDragFrom(null)
+                }}
+                onDragEnd={() => setDragFrom(null)}
+              >
+                <span className="drag-handle" aria-hidden="true">
+                  ⋮⋮
+                </span>
                 <button
-                  className={i === player.index ? 'queue-item active' : 'queue-item'}
+                  className="queue-item"
                   onClick={() => player.jumpTo(i)}
                 >
                   <span className="q-title">{t.title}</span>
@@ -326,6 +430,26 @@ export default function App() {
                     {t.duration ? ` · ${formatDuration(t.duration)}` : ''}
                   </span>
                 </button>
+                <div className="queue-move">
+                  <button
+                    type="button"
+                    className="move-btn"
+                    aria-label="Sposta su"
+                    disabled={i === 0}
+                    onClick={() => player.moveTrackBy(i, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    className="move-btn"
+                    aria-label="Sposta giù"
+                    disabled={i >= player.playlist.length - 1}
+                    onClick={() => player.moveTrackBy(i, 1)}
+                  >
+                    ↓
+                  </button>
+                </div>
               </li>
             ))}
           </ul>
@@ -370,10 +494,18 @@ function SiriGuide({
   shareUrl: string
   onBack: () => void
 }) {
+  const titleExample = makeTitleExample('Sorgerà', 'canzoni', 'shuffle')
+  const askUrl = makeTitleExample('TITOLO', 'tutto', 'shuffle')
+
   const examples = [
     {
       phrase: 'Hey Siri, riproduci da JW canzoni',
       url: makeExample('canzoni', 'shuffle'),
+    },
+    {
+      phrase: 'Hey Siri, riproduci da JW Sorgerà',
+      url: titleExample,
+      note: 'Sostituisci Sorgerà con il titolo nel URL, oppure usa il comando con domanda qui sotto.',
     },
     {
       phrase: 'Hey Siri, riproduci da JW musica internazionale',
@@ -386,10 +518,6 @@ function SiriGuide({
     {
       phrase: 'Hey Siri, riproduci da JW adunanze in ordine',
       url: makeExample('adunanze', 'order'),
-    },
-    {
-      phrase: 'Hey Siri, riproduci da JW canzoni e bambini',
-      url: makeExample('canzoni,bambini', 'shuffle'),
     },
   ]
 
@@ -424,6 +552,37 @@ function SiriGuide({
         </li>
       </ol>
 
+      <h2>Riproduci per titolo + continua</h2>
+      <p className="section-lede">
+        Puoi far partire un brano specifico: dopo finisce e prosegue da solo
+        con il resto della coda.
+      </p>
+      <ol className="steps">
+        <li>
+          Nuovo comando → azione <strong>Chiedi ogni volta</strong> (o «Chiedi
+          input») con domanda: «Quale brano?».
+        </li>
+        <li>
+          Azione <strong>URL</strong> / <strong>Apri URL</strong> con:
+        </li>
+      </ol>
+      <div className="url-box">
+        <p className="label">Modello (sostituisci TITOLO con la risposta)</p>
+        <code>{askUrl}</code>
+        <p className="section-lede" style={{ margin: 0 }}>
+          In Comandi: usa «URL» con testo + variabile della risposta al posto di{' '}
+          <code style={{ display: 'inline' }}>TITOLO</code>, poi «Apri URL».
+          Aggiungi a Siri come «riproduci da JW». Quando lo dici, Siri chiede il
+          titolo e parte da lì.
+        </p>
+        <button
+          className="btn primary"
+          onClick={() => void navigator.clipboard?.writeText(askUrl)}
+        >
+          Copia modello
+        </button>
+      </div>
+
       <div className="url-box">
         <p className="label">URL della selezione attuale</p>
         <code>{shareUrl}</code>
@@ -441,6 +600,11 @@ function SiriGuide({
           <li key={ex.phrase}>
             <p className="phrase">«{ex.phrase}»</p>
             <code>{ex.url}</code>
+            {'note' in ex && ex.note ? (
+              <p className="section-lede" style={{ margin: 0 }}>
+                {ex.note}
+              </p>
+            ) : null}
             <button
               className="btn ghost small"
               onClick={() => void navigator.clipboard?.writeText(ex.url)}
@@ -464,6 +628,15 @@ function makeExample(sections: string, mode: PlayMode) {
   const url = new URL(window.location.origin + window.location.pathname)
   url.searchParams.set('s', sections)
   url.searchParams.set('mode', mode)
+  url.searchParams.set('play', '1')
+  return url.toString()
+}
+
+function makeTitleExample(title: string, sections: string, mode: PlayMode) {
+  const url = new URL(window.location.origin + window.location.pathname)
+  url.searchParams.set('s', sections)
+  url.searchParams.set('mode', mode)
+  url.searchParams.set('title', title)
   url.searchParams.set('play', '1')
   return url.toString()
 }

@@ -41,6 +41,7 @@ Parametri URL:
 |-----------|--------|-------------|
 | `s` / `section` | `tutto`, `canzoni`, `musica-internazionale`, `adunanze`, `cantata`, `strumentale`, `corale`, `bambini`, `melodie`, `gnj1`, `gnj2`, `gnj3` (anche combinati con virgola) | Sezioni da riprodurre |
 | `mode` | `shuffle` / `casuale` oppure `order` / `ordine` | Modalità |
+| `title` / `t` / `brano` | testo del titolo | Parte da quel brano, poi continua con il resto della coda |
 | `play` | `1` | Avvia subito |
 
 Esempi:
@@ -51,7 +52,10 @@ Esempi:
 /?s=tutto&mode=shuffle&play=1
 /?s=adunanze&mode=order&play=1
 /?s=canzoni,bambini&mode=shuffle&play=1
+/?s=canzoni&title=Sorgerà&mode=shuffle&play=1
 ```
+
+Nella coda puoi **trascinare** i brani o usare **↑ ↓** per riordinarli a mano.
 
 ### Configurare Siri
 
