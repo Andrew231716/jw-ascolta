@@ -12,8 +12,8 @@ App web personale per riprodurre **cantici, canzoni e musica** dalla sezione [Mu
 - Selezione di **una o più sezioni** insieme
 - Modalità **casuale** o **in ordine**
 - Controlli sulla schermata di blocco e **Now Playing CarPlay** (Media Session)
-- **Deep link** per Siri / Comandi iOS (anche in auto)
-- API `/api/play` (MP3 diretto) e `/api/playlist` (M3U)
+- **Tutti i comandi Siri in CarPlay** via `/api/carplay` (HLS + Apri URL)
+- API `/api/play` (MP3), `/api/playlist` (HLS/M3U), `/api/carplay` (HLS)
 - Installabile come PWA (Aggiungi a Home)
 
 ## Avvio
@@ -50,13 +50,22 @@ API:
 
 | Percorso | Descrizione |
 |----------|-------------|
-| `/api/play?title=…` | Redirect all’MP3 del brano (ideale CarPlay a 1 brano) |
-| `/api/playlist?title=…&mode=shuffle` | Playlist M3U a partire dal titolo |
+| `/api/carplay?s=…&mode=…&title=…` | **HLS per CarPlay** — tutti i comandi Siri con Apri URL |
+| `/api/play?title=…` | Redirect all’MP3 di un solo brano |
+| `/api/playlist?s=…&mode=…&title=…` | Playlist HLS (default) o `format=m3u` |
 | `/api/resolve?title=…` | JSON con URL audio e pageUrl |
 
-### CarPlay
+### CarPlay (tutti i comandi)
 
-Le web app non compaiono come app CarPlay. Usa Siri in auto: l’audio parte dal telefono e Now Playing sull’auto mostra play/pausa/avanti. Preferisci `/api/play` per un brano senza tap; per la coda avvia l’app sul telefono prima di collegare CarPlay.
+Le web app non compaiono come icona CarPlay. Per avere **gli stessi comandi Siri in auto**, ogni Shortcut deve usare **Apri URL** verso `/api/carplay` (non la pagina web):
+
+```
+/api/carplay?s=canzoni&mode=shuffle
+/api/carplay?s=tutto&mode=shuffle
+/api/carplay?s=tutto&mode=shuffle&title=Sorgerà
+```
+
+L’iPhone riproduce la coda HLS; CarPlay mostra Now Playing.
 
 Esempi:
 
