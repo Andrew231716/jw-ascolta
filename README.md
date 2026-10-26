@@ -11,8 +11,9 @@ App web personale per riprodurre **cantici, canzoni e musica** dalla sezione [Mu
 - Riproduzione di **tutto** il catalogo audio musicale (italiano)
 - Selezione di **una o più sezioni** insieme
 - Modalità **casuale** o **in ordine**
-- Controlli sulla schermata di blocco (Media Session)
-- **Deep link** per Siri / Comandi iOS
+- Controlli sulla schermata di blocco e **Now Playing CarPlay** (Media Session)
+- **Deep link** per Siri / Comandi iOS (anche in auto)
+- API `/api/play` (MP3 diretto) e `/api/playlist` (M3U)
 - Installabile come PWA (Aggiungi a Home)
 
 ## Avvio
@@ -43,6 +44,19 @@ Parametri URL:
 | `mode` | `shuffle` / `casuale` oppure `order` / `ordine` | Modalità |
 | `title` / `t` / `brano` | testo del titolo | Parte da quel brano, poi continua con il resto della coda |
 | `play` | `1` | Avvia subito |
+| `siri` / `carplay` | `1` | UI compatta per avvio da comando / auto |
+
+API:
+
+| Percorso | Descrizione |
+|----------|-------------|
+| `/api/play?title=…` | Redirect all’MP3 del brano (ideale CarPlay a 1 brano) |
+| `/api/playlist?title=…&mode=shuffle` | Playlist M3U a partire dal titolo |
+| `/api/resolve?title=…` | JSON con URL audio e pageUrl |
+
+### CarPlay
+
+Le web app non compaiono come app CarPlay. Usa Siri in auto: l’audio parte dal telefono e Now Playing sull’auto mostra play/pausa/avanti. Preferisci `/api/play` per un brano senza tap; per la coda avvia l’app sul telefono prima di collegare CarPlay.
 
 Esempi:
 

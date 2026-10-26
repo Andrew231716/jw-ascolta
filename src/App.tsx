@@ -47,6 +47,7 @@ function readQuery() {
   const siriFocus =
     params.get('siri') === '1' ||
     params.get('focus') === '1' ||
+    params.get('carplay') === '1' ||
     (autoplay && Boolean(title.trim()))
   return {
     sections: resolveSectionInput(sectionsRaw || 'tutto'),
@@ -230,7 +231,7 @@ export default function App() {
       {!siriFocus && (
         <nav className="top-nav" aria-label="Navigazione">
           <button type="button" className="nav-link" onClick={openSiriGuide}>
-            Siri per titolo
+            Siri e CarPlay
           </button>
         </nav>
       )}
@@ -252,7 +253,7 @@ export default function App() {
               Riproduci tutto a caso
             </button>
             <button type="button" className="btn ghost" onClick={openSiriGuide}>
-              Siri per titolo
+              Siri e CarPlay
             </button>
           </div>
         </header>
@@ -262,7 +263,7 @@ export default function App() {
         <header className="siri-focus-bar">
           <p className="brand compact">JW Ascolta</p>
           <button type="button" className="nav-link" onClick={openSiriGuide}>
-            Guida Siri
+            Siri · CarPlay
           </button>
         </header>
       )}
@@ -441,7 +442,7 @@ export default function App() {
             {catalogLoading ? 'Carico…' : 'Riproduci selezione'}
           </button>
           <button type="button" className="btn ghost" onClick={openSiriGuide}>
-            Siri per titolo
+            Siri e CarPlay
           </button>
         </div>
       </section>
@@ -449,10 +450,10 @@ export default function App() {
 
       {!siriFocus && (
       <section className="siri-teaser" id="siri">
-        <h2>Siri · riproduci per titolo</h2>
+        <h2>Siri e CarPlay</h2>
         <p className="section-lede">
-          Usa <strong>Mostra pagina web</strong> (non Apri URL/Chrome) e{' '}
-          <strong>Dettatura testo</strong>. Guida aggiornata sotto.
+          Stesso comando «riproduci da JW» anche in auto: audio sul telefono, Now
+          Playing su CarPlay. Guida sotto.
         </p>
         <div className="cta-row">
           <button type="button" className="btn primary" onClick={openSiriGuide}>
@@ -546,7 +547,7 @@ export default function App() {
         </p>
         <p>
           <button type="button" className="foot-link" onClick={openSiriGuide}>
-            Siri per titolo
+            Siri e CarPlay
           </button>
         </p>
       </footer>
@@ -571,8 +572,11 @@ function SiriGuide({
   shareUrl: string
   onBack: () => void
 }) {
-  const titleBase = `${window.location.origin}/?s=tutto&mode=shuffle&play=1&siri=1&title=`
-  const directPlayBase = `${window.location.origin}/api/play?title=`
+  const origin = window.location.origin
+  const titleBase = `${origin}/?s=tutto&mode=shuffle&play=1&siri=1&title=`
+  const carplayTitleBase = `${origin}/?s=tutto&mode=shuffle&play=1&siri=1&carplay=1&title=`
+  const directPlayBase = `${origin}/api/play?title=`
+  const playlistBase = `${origin}/api/playlist?mode=shuffle&title=`
   const titleExample = makeTitleExample('Sorgerà', 'tutto', 'shuffle')
 
   const otherExamples = [
@@ -592,19 +596,89 @@ function SiriGuide({
         ← Indietro
       </button>
       <p className="brand">JW Ascolta</p>
-      <h1>Siri senza Chrome</h1>
+      <h1>Siri e CarPlay</h1>
       <p className="lede">
-        Se usi «Apri URL», iPhone apre Chrome (browser predefinito) e blocca
-        l’autoplay. Per evitare Chrome usa i passaggi sotto.
+        Stesso comando vocale a casa e in auto. L’audio parte dal telefono e
+        CarPlay mostra Now Playing (play, pausa, avanti, indietro).
       </p>
 
       <div className="url-box highlight">
-        <p className="label">Limite di iPhone (importante)</p>
+        <p className="label">Come funziona in auto</p>
         <p className="section-lede" style={{ margin: 0 }}>
-          Nessuna app web può far partire l’audio da Siri senza un tap: è una
-          regola di Apple. Dopo Siri vedrai «Tocca per ascoltare»: un tocco e
-          poi va avanti da sola con il resto della coda.
+          Apple non permette alle web app di apparire come app CarPlay. Siri e
+          i Comandi sì: dici «Hey Siri, riproduci da JW», l’audio esce sul
+          sistema dell’auto e i controlli restano su Now Playing.
         </p>
+      </div>
+
+      <h2>CarPlay · uso consigliato</h2>
+      <ol className="steps">
+        <li>
+          <strong>Prima di partire</strong> (o fermo): avvia JW Ascolta sul
+          telefono e tocca una volta «Tocca per ascoltare» se compare.
+        </li>
+        <li>
+          Collega CarPlay: l’audio passa all’auto e compare{' '}
+          <strong>Now Playing</strong> con titolo e controlli.
+        </li>
+        <li>
+          In viaggio: <strong>«Hey Siri, riproduci da JW»</strong> + titolo. Usa
+          il comando con MP3 diretto (sotto) così non serve lo schermo del
+          telefono.
+        </li>
+        <li>
+          Nei Comandi, attiva <strong>Mostra in CarPlay</strong> / esecuzione
+          mentre è bloccato, così Siri può lanciare il comando dall’auto.
+        </li>
+      </ol>
+
+      <div className="url-box highlight">
+        <p className="label">Comando CarPlay (1 brano, senza Chrome)</p>
+        <p className="section-lede" style={{ margin: 0 }}>
+          Stesso schema: Dettatura → Codifica URL → Testo (base qui sotto +
+          testo codificato) → <strong>Apri URL</strong> oppure Mostra pagina.
+          L’MP3 parte subito e l’auto lo prende in Now Playing. Non continua con
+          la coda.
+        </p>
+        <code>{directPlayBase}</code>
+        <button
+          className="btn primary"
+          onClick={() => void navigator.clipboard?.writeText(directPlayBase)}
+        >
+          Copia base MP3 (CarPlay)
+        </button>
+      </div>
+
+      <div className="url-box">
+        <p className="label">Coda completa + CarPlay (app web)</p>
+        <p className="section-lede" style={{ margin: 0 }}>
+          Per titolo + resto della coda: base sotto con{' '}
+          <strong>Mostra pagina web</strong>. Serve il tap iniziale sul telefono
+          (regola Apple); poi Now Playing su CarPlay controlla play/pausa e
+          brani.
+        </p>
+        <code>{carplayTitleBase}</code>
+        <button
+          className="btn ghost"
+          onClick={() => void navigator.clipboard?.writeText(carplayTitleBase)}
+        >
+          Copia base coda + CarPlay
+        </button>
+      </div>
+
+      <div className="url-box">
+        <p className="label">Playlist M3U (opzionale)</p>
+        <p className="section-lede" style={{ margin: 0 }}>
+          Elenco MP3 a partire da un titolo. Alcuni player / Comandi possono
+          aprirlo; utile se preferisci un file playlist invece della pagina.
+        </p>
+        <code>{playlistBase}</code>
+        <button
+          className="btn ghost"
+          onClick={() => void navigator.clipboard?.writeText(playlistBase)}
+        >
+          Copia base playlist
+        </button>
       </div>
 
       <h2>1) Aggiungi l’app a Home (da Safari)</h2>
@@ -618,7 +692,7 @@ function SiriGuide({
         </li>
       </ol>
 
-      <h2>2) Ricrea il comando (senza Apri URL)</h2>
+      <h2>2) Ricrea il comando (senza Chrome)</h2>
       <ol className="steps">
         <li>
           In <strong>Comandi</strong>, cancella il vecchio «Riproduci da JW» e
@@ -637,7 +711,7 @@ function SiriGuide({
       </ol>
 
       <div className="url-box">
-        <p className="label">Base da mettere nell’azione Testo</p>
+        <p className="label">Base app + coda (casa / prima di guidare)</p>
         <code>{titleBase}</code>
         <button
           className="btn primary"
@@ -649,42 +723,34 @@ function SiriGuide({
 
       <ol className="steps" start={5}>
         <li>
-          Aggiungi <strong>Mostra pagina web</strong> (cerca «Mostra pagina»),{' '}
-          <em>non</em> «Apri URL». Come input scegli <strong>Testo</strong>{' '}
-          (il link https completo).
+          Per la coda: <strong>Mostra pagina web</strong> (non «Apri URL» /
+          Chrome). Input = variabile <strong>Testo</strong>.
         </li>
         <li>
-          In opzioni di «Mostra pagina web», se c’è «Safari» / visualizzazione,
-          lasciala attiva. Così resta dentro Comandi e <strong>non apre
-          Chrome</strong>.
+          Per CarPlay a 1 brano: usa la base MP3 e{' '}
+          <strong>Apri URL</strong> (l’audio parte senza UI).
         </li>
         <li>
-          <strong>Aggiungi a Siri</strong> → frase: <strong>riproduci da JW</strong>
+          <strong>Aggiungi a Siri</strong> → frase:{' '}
+          <strong>riproduci da JW</strong>
         </li>
       </ol>
 
       <div className="url-box highlight">
-        <p className="label">Ordine azioni</p>
+        <p className="label">Ordine azioni (coda)</p>
         <p className="section-lede" style={{ margin: 0 }}>
           Dettatura testo → Codifica URL → Testo →{' '}
           <strong>Mostra pagina web</strong> (variabile Testo).
         </p>
       </div>
 
-      <h2>3) Alternativa: solo 1 brano (spesso parte da solo)</h2>
-      <p className="section-lede">
-        Se ti basta un singolo brano (senza coda), apri direttamente l’MP3.
-        Spesso l’autoplay funziona meglio; non continua con gli altri.
-      </p>
       <div className="url-box">
-        <p className="label">Base MP3 diretto (stesso schema Testo + Mostra/Apri)</p>
-        <code>{directPlayBase}</code>
-        <button
-          className="btn ghost"
-          onClick={() => void navigator.clipboard?.writeText(directPlayBase)}
-        >
-          Copia base MP3
-        </button>
+        <p className="label">Limite iPhone</p>
+        <p className="section-lede" style={{ margin: 0 }}>
+          Le pagine web non possono far partire l’audio da Siri senza un tap.
+          L’MP3 diretto (`/api/play`) di solito sì — ed è il percorso migliore
+          in CarPlay. Con la coda serve un tocco, poi Now Playing sull’auto.
+        </p>
       </div>
 
       <div className="url-box">
@@ -743,5 +809,6 @@ function makeTitleExample(title: string, sections: string, mode: PlayMode) {
   url.searchParams.set('title', title)
   url.searchParams.set('play', '1')
   url.searchParams.set('siri', '1')
+  url.searchParams.set('carplay', '1')
   return url.toString()
 }

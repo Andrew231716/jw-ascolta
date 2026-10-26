@@ -159,7 +159,90 @@ export function useAudioPlayer() {
     })
     navigator.mediaSession.setActionHandler('previoustrack', () => playPrev())
     navigator.mediaSession.setActionHandler('nexttrack', () => playNext())
+    navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+      const audio = audioRef.current
+      if (!audio) return
+      audio.currentTime = Math.max(
+        0,
+        audio.currentTime - (details.seekOffset || 10),
+      )
+    })
+    navigator.mediaSession.setActionHandler('seekforward', (details) => {
+      const audio = audioRef.current
+      if (!audio) return
+      audio.currentTime = Math.min(
+        audio.duration || audio.currentTime + 10,
+        audio.currentTime + (details.seekOffset || 10),
+      )
+    })
+    try {
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        const audio = audioRef.current
+        if (!audio || details.seekTime == null) return
+        audio.currentTime = details.seekTime
+      })
+    } catch {
+      /* older Safari */
+    }
   }, [playNext, playPrev])
+
+  // Keep Now Playing / CarPlay position in sync.
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio || !('mediaSession' in navigator)) return
+    const sync = () => {
+      if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: audio.duration,
+          playbackRate: audio.playbackRate || 1,
+          position: Math.min(audio.currentTime, audio.duration),
+        })
+      } catch {
+        /* ignore */
+      }
+      navigator.mediaSession.playbackState = audio.paused
+        ? 'paused'
+        : 'playing'
+    }
+    audio.addEventListener('timeupdate', sync)
+    audio.addEventListener('play', sync)
+    audio.addEventListener('pause', sync)
+    audio.addEventListener('durationchange', sync)
+    return () => {
+      audio.removeEventListener('timeupdate', sync)
+      audio.removeEventListener('play', sync)
+      audio.removeEventListener('pause', sync)
+      audio.removeEventListener('durationchange', sync)
+    }
+  }, [])
+
+  // Reduce iOS suspending the tab while audio should continue (CarPlay/Bluetooth).
+  useEffect(() => {
+    let wake: WakeLockSentinel | null = null
+    const request = async () => {
+      try {
+        if ('wakeLock' in navigator && !audioRef.current?.paused) {
+          wake = await navigator.wakeLock.request('screen')
+        }
+      } catch {
+        /* unsupported / denied */
+      }
+    }
+    const onPlay = () => void request()
+    const onPause = () => {
+      void wake?.release()
+      wake = null
+    }
+    const audio = audioRef.current
+    audio?.addEventListener('play', onPlay)
+    audio?.addEventListener('pause', onPause)
+    return () => {
+      audio?.removeEventListener('play', onPlay)
+      audio?.removeEventListener('pause', onPause)
+      void wake?.release()
+    }
+  }, [])
 
   // Any first tap/key while waiting for gesture unlocks audio (Siri → Safari).
   useEffect(() => {
@@ -303,7 +386,12 @@ export function useAudioPlayer() {
 function updateMediaSession(track: Track) {
   if (!('mediaSession' in navigator)) return
   const artwork = track.image
-    ? [{ src: track.image, sizes: '512x512', type: 'image/jpeg' }]
+    ? [
+        { src: track.image, sizes: '96x96', type: 'image/jpeg' },
+        { src: track.image, sizes: '128x128', type: 'image/jpeg' },
+        { src: track.image, sizes: '256x256', type: 'image/jpeg' },
+        { src: track.image, sizes: '512x512', type: 'image/jpeg' },
+      ]
     : []
   navigator.mediaSession.metadata = new MediaMetadata({
     title: track.title,
@@ -311,4 +399,9 @@ function updateMediaSession(track: Track) {
     album: track.sectionName,
     artwork,
   })
+  try {
+    navigator.mediaSession.playbackState = 'playing'
+  } catch {
+    /* ignore */
+  }
 }
