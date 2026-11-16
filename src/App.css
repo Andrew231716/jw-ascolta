@@ -894,3 +894,42 @@ code {
 .app.siri-focus {
   padding-top: calc(1.25rem + env(safe-area-inset-top));
 }
+
+.library-list .listening-result,
+.library-list .collection-editor {
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  padding-block: .75rem;
+}
+
+.result-actions,
+.collection-editor details {
+  width: 100%;
+}
+
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+
+.result-actions select {
+  width: auto;
+  max-width: 100%;
+}
+
+.copy-feedback:not(:has(span:empty)) {
+  position: sticky;
+  top: calc(env(safe-area-inset-top) + .5rem);
+  z-index: 2;
+  display: grid;
+  gap: .4rem;
+  padding: .75rem;
+  border-radius: .75rem;
+  background: #19152c;
+  color: white;
+}
+
+.now[hidden] {
+  display: none;
+}

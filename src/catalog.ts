@@ -198,14 +198,17 @@ export async function fetchSectionTracks(
 
 export async function fetchTracksForSlugs(
   slugs: SectionSlug[],
-): Promise<Track[]> {
+): Promise<{ tracks: Track[]; unavailable: string[] }> {
   const wanted =
     slugs.includes('tutto') || slugs.length === 0
       ? SECTIONS
       : SECTIONS.filter((s) => slugs.includes(s.slug))
 
-  const batches = await Promise.all(wanted.map(fetchSectionTracks))
-  return batches.flat()
+  const batches = await Promise.allSettled(wanted.map(fetchSectionTracks))
+  const tracks = batches.flatMap((batch) => batch.status === 'fulfilled' ? batch.value : [])
+  const unavailable = wanted.filter((_, index) => batches[index].status === 'rejected').map((section) => section.shortName)
+  if (unavailable.length === wanted.length && wanted.length) throw new Error('Catalogo musicale non disponibile. Riprova.')
+  return { tracks, unavailable }
 }
 
 export function normalizeAlias(raw: string): string {

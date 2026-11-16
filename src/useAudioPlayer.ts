@@ -85,6 +85,10 @@ export function useAudioPlayer() {
     }
   }, [])
 
+  const repeat = useRef(true)
+  const speed = useRef(1)
+  const pendingSeek = useRef<(() => void) | null>(null)
+
   const loadAndPlay = useCallback(async (track: Track, autoplay: boolean, position = 0) => {
     const audio = audioRef.current
     if (!audio) return
@@ -97,10 +101,21 @@ export function useAudioPlayer() {
       currentTime: 0,
       duration: track.duration || 0,
     }))
+    if (pendingSeek.current) audio.removeEventListener('loadedmetadata', pendingSeek.current)
+    pendingSeek.current = null
     audio.src = track.url
     audio.load()
+    audio.playbackRate = speed.current
     if (position > 0) {
-      try { audio.currentTime = position } catch { /* Il browser può attendere i metadati. */ }
+      const restore = () => {
+        pendingSeek.current = null
+        audio.currentTime = Math.min(position, Number.isFinite(audio.duration) ? audio.duration : position)
+      }
+      if (audio.readyState >= 1) restore()
+      else {
+        pendingSeek.current = restore
+        audio.addEventListener('loadedmetadata', restore, { once: true })
+      }
     }
     updateMediaSession(track)
     if (autoplay) {
@@ -149,7 +164,9 @@ export function useAudioPlayer() {
   useEffect(() => {
     const audio = audioRef.current
     if (!audio) return
-    const onEnded = () => playNext()
+    const onEnded = () => {
+      if (repeat.current || indexRef.current + 1 < playlistRef.current.length) playNext()
+    }
     audio.addEventListener('ended', onEnded)
     return () => audio.removeEventListener('ended', onEnded)
   }, [playNext])
@@ -392,6 +409,23 @@ export function useAudioPlayer() {
     jumpTo,
     moveTrack,
     moveTrackBy,
+    setRepeat: (enabled: boolean) => { repeat.current = enabled },
+    setSpeed: (rate: number) => {
+      speed.current = rate
+      if (audioRef.current) audioRef.current.playbackRate = rate
+    },
+    skip: (seconds: number) => {
+      const audio = audioRef.current
+      if (audio && Number.isFinite(audio.duration)) {
+        audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + seconds))
+      }
+    },
+    append: (track: Track) => {
+      if (!playlistRef.current.length) { void setPlaylist([track], false); return }
+      const playlist = [...playlistRef.current, track]
+      playlistRef.current = playlist
+      setState((state) => ({ ...state, playlist }))
+    },
     resumeFromGesture,
     pause: () => audioRef.current?.pause(),
   }

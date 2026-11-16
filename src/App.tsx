@@ -106,6 +106,8 @@ export default function App() {
   const [mode, setMode] = useState<PlayMode>(initial.mode)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [later, setLater] = useState(() => readSaved<Track[]>('later', []))
+  const [speed, setSpeed] = useState(1)
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [queueExpanded, setQueueExpanded] = useState(false)
   const [titleQuery, setTitleQuery] = useState(initial.title)
@@ -143,6 +145,8 @@ export default function App() {
       document.removeEventListener('visibilitychange', persist)
     }
   }, [])
+
+  useEffect(() => saveLocal('later', later), [later])
 
   useEffect(() => saveLocal('favorites', favorites), [favorites])
   useEffect(() => saveLocal('collections', collections), [collections])
@@ -184,7 +188,8 @@ export default function App() {
     setResults(null)
     setStatus(null)
     try {
-      const tracks = await fetchTracksForSlugs(effectiveSlugs)
+      const { tracks, unavailable } = await fetchTracksForSlugs(effectiveSlugs)
+      if (unavailable.length) setStatus(`Categorie non disponibili: ${unavailable.join(", ")}`)
       setResults(tracks.filter((track) => normalizeTitle(track.title).includes(query)))
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Catalogo non disponibile')
@@ -214,7 +219,7 @@ export default function App() {
     setCatalogLoading(true)
     setStatus('Carico il catalogo da JW.org…')
     try {
-      const tracks = await fetchTracksForSlugs(slugs)
+      const { tracks, unavailable } = await fetchTracksForSlugs(slugs)
       let playlist = buildPlaylist(tracks, playMode)
       let matchedTitle: string | null = null
 
@@ -238,6 +243,7 @@ export default function App() {
             : `${playlist.length} brani · ${playMode === 'shuffle' ? 'casuale' : 'in ordine'}`
           : null,
       )
+      if (unavailable.length) setStatus(`Categorie non disponibili: ${unavailable.join(", ")}`)
       await player.setPlaylist(playlist, autoplay, 0)
 
       const url = new URL(window.location.href)
@@ -342,11 +348,18 @@ export default function App() {
             <h1 className="brand">JW Ascolta</h1>
           </div>
           <p className="lede">Musica, articoli audio e video da JW.org.</p>
+          {!player.current && saved?.tracks[saved.index] && (
+            <button className="btn primary" disabled={catalogLoading}
+              onClick={() => playTracks(saved.tracks, saved.index, saved.position)}>
+              Riprendi ascolto · {saved.tracks[saved.index].title} · {formatDuration(saved.position)}
+            </button>
+          )}
           <nav className="top-nav" aria-label="Libreria">
             <a className="nav-link" href="#scegli" onClick={() => setLibraryOpen(false)}>Musica</a>
             <button type="button" className="nav-link" aria-expanded={libraryOpen}
               onClick={() => setLibraryOpen((open) => !open)}>Articoli e video</button>
             <button type="button" className="nav-link" onClick={openSiriGuide}>Siri e CarPlay</button>
+            <a className="nav-link" href="#libreria">La mia libreria</a>
           </nav>
           <div className="cta-row">
             <button className="btn primary" disabled={catalogLoading}
@@ -366,7 +379,7 @@ export default function App() {
         </header>
       )}
 
-      <section className="now" ref={nowRef} hidden={!player.current && !status && !saved?.tracks[saved.index]}>
+      <section className="now" ref={nowRef} hidden={!player.current && !status && !(siriFocus && saved?.tracks[saved.index])}>
         {player.current ? (
           <>
             <div className="now-art-wrap">
@@ -435,7 +448,7 @@ export default function App() {
         ) : (
           <div className="now-empty">
             <p>{status || 'Nessun brano in riproduzione.'}</p>
-            {saved?.tracks[saved.index] && (
+            {siriFocus && saved?.tracks[saved.index] && (
               <button className="btn primary" disabled={catalogLoading}
                 onClick={() => playTracks(saved.tracks, saved.index, saved.position)}>
                 Riprendi · {saved.tracks[saved.index].title} · {formatDuration(saved.position)}
@@ -447,6 +460,14 @@ export default function App() {
 
       {player.current && (
         <section className="chooser listening-tools" aria-label="Timer di spegnimento">
+          <button className="btn ghost small" onClick={() => player.skip(-15)}>−15 s</button>
+          <button className="btn ghost small" onClick={() => player.skip(15)}>+15 s</button>
+          <label>Velocità <select value={speed} onChange={(event) => {
+            const rate = Number(event.target.value)
+            setSpeed(rate)
+            player.setSpeed(rate)
+          }}>{[0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label>
+          <label><input type="checkbox" onChange={(event) => player.setRepeat(!event.target.checked)} /> Ferma a fine coda</label>
           <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
             {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}
           </select></label>
@@ -458,7 +479,14 @@ export default function App() {
         </section>
       )}
 
-      {libraryOpen && !siriFocus && <ListeningLibrary onPlay={playTracks} />}
+      {!siriFocus && <div hidden={!libraryOpen}>
+        <ListeningLibrary active={libraryOpen} onPlay={playTracks} onAppend={player.append}
+          later={later} onLater={(track) => setLater((list) =>
+            list.some((item) => item.id === track.id) ? list.filter((item) => item.id !== track.id) : [...list, track])}
+          collections={collections} onSave={(id, track) => setCollections((list) => list.map((item) =>
+            item.id === id && !item.tracks.some((saved) => saved.id === track.id)
+              ? { ...item, tracks: [...item.tracks, track] } : item))} />
+      </div>}
 
       {!siriFocus && (
       <section className="chooser" id="scegli">
@@ -642,7 +670,11 @@ export default function App() {
       )}
 
       {!siriFocus && (
-        <section className="chooser" aria-label="Libreria personale">
+        <section className="chooser" id="libreria" aria-label="Libreria personale">
+          <h2>Ascolta dopo</h2>
+          {later.length ? <TrackList tracks={later} onPlay={(index) => playTracks(later, index)}
+            onRemove={(track) => setLater((list) => list.filter((item) => item.id !== track.id))} />
+            : <p>Salva un articolo o un video dal catalogo per ritrovarlo qui.</p>}
           <h2>Preferiti e raccolte</h2>
           {favorites.length ? (
             <>
@@ -665,7 +697,21 @@ export default function App() {
           )}
           <ul className="library-list">
             {collections.map((collection) => (
-              <li key={collection.id}>
+              <li className="collection-editor" key={collection.id}>
+                <details>
+                  <summary>Modifica {collection.name}</summary>
+                  <form className="title-row" onSubmit={(event) => {
+                    event.preventDefault()
+                    const name = String(new FormData(event.currentTarget).get('name') ?? '').trim()
+                    if (name) setCollections((list) => list.map((item) => item.id === collection.id ? { ...item, name } : item))
+                  }}>
+                    <input name="name" aria-label="Nome raccolta" defaultValue={collection.name} maxLength={80} required />
+                    <button className="btn ghost small">Rinomina</button>
+                  </form>
+                  <TrackList tracks={collection.tracks} onPlay={(index) => playTracks(collection.tracks, index)}
+                    onRemove={(track) => setCollections((list) => list.map((item) => item.id === collection.id
+                      ? { ...item, tracks: item.tracks.filter((entry) => entry.id !== track.id) } : item))} />
+                </details>
                 <button className="queue-item" onClick={() => playTracks(collection.tracks)}>
                   {collection.name} · {collection.tracks.length} brani
                 </button>
@@ -744,6 +790,18 @@ function SiriGuide({
   shareUrl: string
   onBack: () => void
 }) {
+  const [copyStatus, setCopyStatus] = useState('')
+  const [manualLink, setManualLink] = useState('')
+  async function copyLink(url: string) {
+    try {
+      await navigator.clipboard.writeText(url)
+      setManualLink('')
+      setCopyStatus('Link copiato.')
+    } catch {
+      setCopyStatus('Copia automatica non disponibile. Seleziona il link qui sopra e copialo.')
+      setManualLink(url)
+    }
+  }
   const origin = window.location.origin
   const carplayTitleBase = `${origin}/api/carplay?s=tutto&mode=shuffle&title=`
   const webTitleBase = `${origin}/?s=tutto&mode=shuffle&play=1&siri=1&title=`
@@ -779,6 +837,11 @@ function SiriGuide({
       </button>
       <p className="brand">JW Ascolta</p>
       <h1>Siri e CarPlay</h1>
+      <div className="copy-feedback">
+        {manualLink && <input aria-label="Link da copiare" readOnly value={manualLink}
+          onFocus={(event) => event.currentTarget.select()} />}
+        <span role="status">{copyStatus}</span>
+      </div>
       <p className="lede">
         Per iniziare, copia uno degli URL CarPlay qui sotto e incollalo
         nell’azione «Apri URL» di un nuovo comando su iPhone. Provalo prima di partire.
@@ -817,7 +880,7 @@ function SiriGuide({
             <code>{ex.url}</code>
             <button
               className="btn ghost small"
-              onClick={() => void navigator.clipboard?.writeText(ex.url)}
+              onClick={() => void copyLink(ex.url)}
             >
               Copia URL CarPlay
             </button>
@@ -850,7 +913,7 @@ function SiriGuide({
         <code>{carplayTitleBase}</code>
         <button
           className="btn primary"
-          onClick={() => void navigator.clipboard?.writeText(carplayTitleBase)}
+          onClick={() => void copyLink(carplayTitleBase)}
         >
           Copia base CarPlay
         </button>
@@ -862,7 +925,7 @@ function SiriGuide({
         <button
           className="btn ghost"
           onClick={() =>
-            void navigator.clipboard?.writeText(
+            void copyLink(
               makeCarplayUrl('tutto', 'shuffle', 'Sorgerà'),
             )
           }
@@ -905,7 +968,7 @@ function SiriGuide({
         <code>{webTitleBase}</code>
         <button
           className="btn ghost"
-          onClick={() => void navigator.clipboard?.writeText(webTitleBase)}
+          onClick={() => void copyLink(webTitleBase)}
         >
           Copia base web
         </button>
@@ -915,7 +978,7 @@ function SiriGuide({
         <code>{titleExample}</code>
         <button
           className="btn ghost"
-          onClick={() => void navigator.clipboard?.writeText(titleExample)}
+          onClick={() => void copyLink(titleExample)}
         >
           Copia
         </button>
@@ -925,7 +988,7 @@ function SiriGuide({
         <code>{shareUrl}</code>
         <button
           className="btn ghost"
-          onClick={() => void navigator.clipboard?.writeText(shareUrl)}
+          onClick={() => void copyLink(shareUrl)}
         >
           Copia URL
         </button>

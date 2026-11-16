@@ -81,13 +81,24 @@ async function videoTracks(key: string) {
   return tracks
 }
 
-async function articleTracks(path: string, offset: number) {
+function matches(title: string, query: string) {
+  const normalize = (value: string) => value.toLowerCase().normalize('NFD')
+    .replace(/\p{M}/gu, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+  const text = normalize(title)
+  return normalize(query).split(' ').every((word) => text.includes(word))
+}
+
+async function articleTracks(path: string, offset: number, query = '', name = '') {
   const html = await (await read(site + path)).text()
   const documentIds = new Map<string, string>()
   for (const match of html.matchAll(/<a\b[^>]*href="(\/it\/[^"#?]+\/)"[^>]*data-page-id="mid(\d+)"[^>]*>/g)) {
     if (match[1] !== path) documentIds.set(match[2], match[1])
   }
-  const candidates = [...documentIds]
+  const titles = new Map<string, string>()
+  if (query) for (const link of links(html)) {
+    if (link.name && matches(link.name, query)) titles.set(link.path, link.name)
+  }
+  const candidates = [...documentIds].filter(([, path]) => !query || titles.has(path))
   const batch = candidates.slice(offset, offset + 12)
   const results = await Promise.allSettled(batch.map(async ([id, permalink]) => {
     const params = new URLSearchParams({ docid: id, output: 'json', fileformat: 'MP3', alllangs: '0', track: '1', langwritten: 'I', txtCMSLang: 'I' })
@@ -99,7 +110,7 @@ async function articleTracks(path: string, offset: number) {
       item.mimetype === 'audio/mpeg' && item.file?.url?.startsWith('https://'))
     return file ? {
       id: 'article-' + id, title: file.title, url: file.file.url,
-      duration: file.duration ?? 0, source: site + permalink, topics: [],
+      duration: file.duration ?? 0, source: site + permalink, topics: name ? [name] : [],
     } : null
   }))
   const failed = results.filter((result) => result.status === 'rejected').length
@@ -114,14 +125,37 @@ export default async function handler(request: Request) {
   const { searchParams } = new URL(request.url)
   const kind = searchParams.get('kind')
   const topic = searchParams.get('topic')
+  const query = (searchParams.get('q') ?? '').trim().slice(0, 120)
+  const offset = Number(searchParams.get('offset') ?? 0)
+  if (!Number.isSafeInteger(offset) || offset < 0) return new Response(null, { status: 400 })
   const headers = { 'Cache-Control': 'public, s-maxage=3600, stale-while-revalidate=86400' }
   try {
+    if ((kind === 'articles' || kind === 'videos') && query && !topic) {
+      const topics = kind === 'articles' ? await articleTopics()
+        : (await category('VideoOnDemand')).subcategories?.map(({ key, name }) => ({ id: key, name })) ?? []
+      const group = Math.floor(offset / 1024) * 4
+      const page = offset % 1024
+      const batch = topics.slice(group, group + 4)
+      const results = await Promise.allSettled(batch.map(async ({ id, name }) => {
+        if (kind === 'articles') {
+          const result = await articleTracks(id, page * 12, query, name)
+          return { ...result, more: result.next !== null }
+        }
+        return { tracks: (await videoTracks(id)).filter((track) => matches(track.title, query)), failed: 0, more: false }
+      }))
+      const available = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : [])
+      const failed = results.length - available.length + available.reduce((sum, result) => sum + result.failed, 0)
+      const tracks = [...new Map(available.flatMap((result) => result.tracks).map((track) => [track.id, track])).values()]
+      return Response.json({
+        tracks, failed,
+        next: available.some((result) => result.more) && page < 1023 ? offset + 1
+          : group + batch.length < topics.length ? (group / 4 + 1) * 1024 : null,
+      }, failed ? {} : { headers })
+    }
     if (kind === 'articles') {
       if (!topic) return Response.json({ topics: await articleTopics() }, { headers })
       if (!/^\/it\/(?:biblioteca-digitale\/articoli|cosa-dice-la-Bibbia)\/[\p{L}\d-]+\/$/u.test(topic)) return new Response(null, { status: 400 })
-      const offset = Number(searchParams.get('offset') ?? 0)
-      if (!Number.isSafeInteger(offset) || offset < 0) return new Response(null, { status: 400 })
-      const result = await articleTracks(topic, offset)
+      const result = await articleTracks(topic, offset, query)
       return Response.json(result, result.failed ? {} : { headers })
     }
     if (kind === 'videos') {
@@ -130,7 +164,7 @@ export default async function handler(request: Request) {
         return Response.json({ topics: root.subcategories?.map(({ key, name }) => ({ id: key, name })) ?? [] }, { headers })
       }
       if (!/^VOD[A-Za-z]+$/.test(topic)) return new Response(null, { status: 400 })
-      return Response.json({ tracks: await videoTracks(topic), next: null }, { headers })
+      return Response.json({ tracks: (await videoTracks(topic)).filter((track) => !query || matches(track.title, query)), next: null }, { headers })
     }
     return new Response(null, { status: 400 })
   } catch {
