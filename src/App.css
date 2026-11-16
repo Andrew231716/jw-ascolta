@@ -840,3 +840,26 @@ code {
     animation: none;
   }
 }
+
+.listening-library > label {
+  display: grid;
+  gap: .35rem;
+  margin-block: .75rem;
+}
+
+.listening-library select,
+.listening-library input {
+  width: 100%;
+  min-height: 44px;
+  padding: .5rem;
+  color: inherit;
+  background: #211b38;
+  border: 1px solid #635983;
+  border-radius: .6rem;
+  font: inherit;
+}
+
+.listening-library a {
+  flex: none;
+  color: #d1c7ff;
+}

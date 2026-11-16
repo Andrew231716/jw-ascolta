@@ -13,6 +13,7 @@ import {
   type SectionSlug,
 } from './catalog'
 import { useAudioPlayer } from './useAudioPlayer'
+import { ListeningLibrary } from './ListeningLibrary'
 import './App.css'
 
 type View = 'home' | 'siri'
@@ -105,6 +106,7 @@ export default function App() {
   const [mode, setMode] = useState<PlayMode>(initial.mode)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const [queueExpanded, setQueueExpanded] = useState(false)
   const [titleQuery, setTitleQuery] = useState(initial.title)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
@@ -335,6 +337,7 @@ export default function App() {
 
       {!siriFocus && (
         <nav className="top-nav" aria-label="Navigazione">
+          <button type="button" className="nav-link" aria-expanded={libraryOpen} onClick={() => setLibraryOpen((open) => !open)}>Articoli e video</button>
           <button type="button" className="nav-link" onClick={openSiriGuide}>
             Siri e CarPlay
           </button>
@@ -464,6 +467,8 @@ export default function App() {
           {timer !== null && <span role="status">Pausa alle {new Date(timer).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span>}
         </section>
       )}
+
+      {libraryOpen && !siriFocus && <ListeningLibrary onPlay={playTracks} />}
 
       {!siriFocus && (
       <section className="chooser" id="scegli">
