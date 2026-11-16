@@ -336,32 +336,22 @@ export default function App() {
       )}
 
       {!siriFocus && (
-        <nav className="top-nav" aria-label="Navigazione">
-          <button type="button" className="nav-link" aria-expanded={libraryOpen} onClick={() => setLibraryOpen((open) => !open)}>Articoli e video</button>
-          <button type="button" className="nav-link" onClick={openSiriGuide}>
-            Siri e CarPlay
-          </button>
-        </nav>
-      )}
-
-      {!siriFocus && (
         <header className="hero">
-          <p className="brand">JW Ascolta</p>
-          <h1 className="headline">Musica per lodare, quando vuoi.</h1>
-          <p className="lede">
-            Cantici, canzoni e musica internazionale da JW.org — in ordine, a
-            caso, per titolo, o con Siri.
-          </p>
+          <div className="brand-lockup">
+            <img src="/favicon.svg" width="56" height="56" alt="" />
+            <h1 className="brand">JW Ascolta</h1>
+          </div>
+          <p className="lede">Musica, articoli audio e video da JW.org.</p>
+          <nav className="top-nav" aria-label="Libreria">
+            <a className="nav-link" href="#scegli" onClick={() => setLibraryOpen(false)}>Musica</a>
+            <button type="button" className="nav-link" aria-expanded={libraryOpen}
+              onClick={() => setLibraryOpen((open) => !open)}>Articoli e video</button>
+            <button type="button" className="nav-link" onClick={openSiriGuide}>Siri e CarPlay</button>
+          </nav>
           <div className="cta-row">
-            <button
-              className="btn primary"
-              disabled={catalogLoading}
-              onClick={() => void startPlayback(['tutto'], 'shuffle', true)}
-            >
-              Riproduci tutto a caso
-            </button>
-            <button type="button" className="btn ghost" onClick={openSiriGuide}>
-              Siri e CarPlay
+            <button className="btn primary" disabled={catalogLoading}
+              onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
+              {catalogLoading ? 'Caricamento…' : 'Riproduci musica a caso'}
             </button>
           </div>
         </header>
@@ -376,7 +366,7 @@ export default function App() {
         </header>
       )}
 
-      <section className="now" ref={nowRef}>
+      <section className="now" ref={nowRef} hidden={!player.current && !status && !saved?.tracks[saved.index]}>
         {player.current ? (
           <>
             <div className="now-art-wrap">

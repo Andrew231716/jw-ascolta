@@ -50,13 +50,14 @@ button {
   isolation: isolate;
   max-width: 920px;
   margin: 0 auto;
-  padding: 1.25rem 1.25rem 4rem;
+  padding: calc(1.25rem + env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right)) calc(4rem + env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
 }
 
 .top-nav {
   display: flex;
-  justify-content: flex-end;
-  margin-bottom: 0.25rem;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-bottom: 1rem;
 }
 
 .nav-link {
@@ -245,11 +246,10 @@ button {
 }
 
 .hero {
-  min-height: min(88dvh, 760px);
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  padding: 2rem 0 2.5rem;
+  padding: .5rem 0 1.4rem;
   animation: rise 0.9s ease both;
 }
 
@@ -752,10 +752,6 @@ code {
     justify-content: center;
   }
 
-  .hero {
-    min-height: 78dvh;
-    justify-content: center;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -862,4 +858,39 @@ code {
 .listening-library a {
   flex: none;
   color: #d1c7ff;
+}
+
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+}
+
+.brand-lockup img {
+  border-radius: 1rem;
+  flex: none;
+}
+
+.brand-lockup .brand {
+  margin: 0;
+  font-size: clamp(1.75rem, 7vw, 3rem);
+}
+
+.top-nav .nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-inline: .7rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.top-nav [aria-expanded="true"] {
+  background: var(--gold);
+  color: #241808;
+}
+
+.app.siri-focus {
+  padding-top: calc(1.25rem + env(safe-area-inset-top));
 }
