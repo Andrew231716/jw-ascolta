@@ -886,7 +886,7 @@ code {
   text-decoration: none;
 }
 
-.top-nav [aria-expanded="true"] {
+.top-nav [aria-pressed="true"] {
   background: var(--gold);
   color: #241808;
 }

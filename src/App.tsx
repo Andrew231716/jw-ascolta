@@ -355,18 +355,19 @@ export default function App() {
             </button>
           )}
           <nav className="top-nav" aria-label="Libreria">
-            <a className="nav-link" href="#scegli" onClick={() => setLibraryOpen(false)}>Musica</a>
-            <button type="button" className="nav-link" aria-expanded={libraryOpen}
-              onClick={() => setLibraryOpen((open) => !open)}>Articoli e video</button>
+            <button type="button" className="nav-link" aria-pressed={!libraryOpen}
+              onClick={() => setLibraryOpen(false)}>Musica</button>
+            <button type="button" className="nav-link" aria-pressed={libraryOpen}
+              onClick={() => setLibraryOpen(true)}>Articoli e video</button>
             <button type="button" className="nav-link" onClick={openSiriGuide}>Siri e CarPlay</button>
             <a className="nav-link" href="#libreria">La mia libreria</a>
           </nav>
-          <div className="cta-row">
+          {!libraryOpen && <div className="cta-row">
             <button className="btn primary" disabled={catalogLoading}
               onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
               {catalogLoading ? 'Caricamento…' : 'Riproduci musica a caso'}
             </button>
-          </div>
+          </div>}
         </header>
       )}
 
@@ -488,7 +489,7 @@ export default function App() {
               ? { ...item, tracks: [...item.tracks, track] } : item))} />
       </div>}
 
-      {!siriFocus && (
+      {!siriFocus && !libraryOpen && (
       <section className="chooser" id="scegli">
         <h2>Sezioni</h2>
         <p className="section-lede">
