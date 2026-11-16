@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useEffectEvent } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import type { Track } from './catalog'
 
 export interface PlayerState {
@@ -85,7 +85,7 @@ export function useAudioPlayer() {
     }
   }, [])
 
-  const loadAndPlay = useEffectEvent(async (track: Track, autoplay: boolean) => {
+  const loadAndPlay = useCallback(async (track: Track, autoplay: boolean, position = 0) => {
     const audio = audioRef.current
     if (!audio) return
     needsGestureRef.current = false
@@ -99,35 +99,40 @@ export function useAudioPlayer() {
     }))
     audio.src = track.url
     audio.load()
+    if (position > 0) {
+      try { audio.currentTime = position } catch { /* Il browser può attendere i metadati. */ }
+    }
     updateMediaSession(track)
     if (autoplay) {
       try {
         await audio.play()
-      } catch {
-        needsGestureRef.current = true
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return
+        const blocked = error instanceof Error && error.name === 'NotAllowedError'
+        needsGestureRef.current = blocked
         setState((s) => ({
           ...s,
           loading: false,
           playing: false,
-          needsGesture: true,
-          error: null,
+          needsGesture: blocked,
+          error: blocked ? null : navigator.onLine ? 'Brano non disponibile. Riprova o passa al successivo.' : 'Connessione assente.',
         }))
       }
     } else {
       setState((s) => ({ ...s, loading: false, playing: false }))
     }
-  })
+  }, [])
 
-  const playNext = useEffectEvent(() => {
+  const playNext = useCallback(() => {
     const list = playlistRef.current
     if (list.length === 0) return
     const next = (indexRef.current + 1) % list.length
     indexRef.current = next
     setState((s) => ({ ...s, index: next }))
     void loadAndPlay(list[next], true)
-  })
+  }, [loadAndPlay])
 
-  const playPrev = useEffectEvent(() => {
+  const playPrev = useCallback(() => {
     const audio = audioRef.current
     const list = playlistRef.current
     if (list.length === 0) return
@@ -139,7 +144,7 @@ export function useAudioPlayer() {
     indexRef.current = prev
     setState((s) => ({ ...s, index: prev }))
     void loadAndPlay(list[prev], true)
-  })
+  }, [loadAndPlay])
 
   useEffect(() => {
     const audio = audioRef.current
@@ -274,6 +279,7 @@ export function useAudioPlayer() {
     tracks: Track[],
     autoplay: boolean,
     startIndex = 0,
+    position = 0,
   ) {
     const safeIndex =
       tracks.length === 0
@@ -287,7 +293,12 @@ export function useAudioPlayer() {
       index: safeIndex,
       error: tracks.length ? null : 'Nessun brano trovato per le sezioni scelte.',
     }))
-    if (tracks[safeIndex]) await loadAndPlay(tracks[safeIndex], autoplay)
+    if (tracks[safeIndex]) await loadAndPlay(tracks[safeIndex], autoplay, position)
+    else {
+      audioRef.current?.pause()
+      audioRef.current?.removeAttribute('src')
+      audioRef.current?.load()
+    }
   }
 
   async function toggle() {
@@ -298,12 +309,14 @@ export function useAudioPlayer() {
         await audio.play()
         needsGestureRef.current = false
         setState((s) => ({ ...s, needsGesture: false, error: null }))
-      } catch {
-        needsGestureRef.current = true
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') return
+        const blocked = error instanceof Error && error.name === 'NotAllowedError'
+        needsGestureRef.current = blocked
         setState((s) => ({
           ...s,
-          needsGesture: true,
-          error: null,
+          needsGesture: blocked,
+          error: blocked ? null : navigator.onLine ? 'Brano non disponibile.' : 'Connessione assente.',
         }))
       }
     } else {
@@ -380,6 +393,7 @@ export function useAudioPlayer() {
     moveTrack,
     moveTrackBy,
     resumeFromGesture,
+    pause: () => audioRef.current?.pause(),
   }
 }
 

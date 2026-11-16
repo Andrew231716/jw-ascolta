@@ -5,6 +5,8 @@ import {
   fetchTracksForSlugs,
   formatDuration,
   parsePlayMode,
+  normalizeTitle,
+  type Track,
   playlistStartingAtTitle,
   resolveSectionInput,
   type PlayMode,
@@ -14,6 +16,26 @@ import { useAudioPlayer } from './useAudioPlayer'
 import './App.css'
 
 type View = 'home' | 'siri'
+
+type Session = { tracks: Track[]; index: number; position: number }
+type Collection = { id: string; name: string; tracks: Track[] }
+
+function readSaved<T>(key: string, fallback: T): T {
+  try {
+    const value = localStorage.getItem('jw-ascolta:' + key)
+    return value ? JSON.parse(value) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function saveLocal(key: string, value: unknown) {
+  try {
+    localStorage.setItem('jw-ascolta:' + key, JSON.stringify(value))
+  } catch {
+    // L'ascolto funziona anche senza spazio di archiviazione.
+  }
+}
 
 function readQuery() {
   const params = new URLSearchParams(window.location.search)
@@ -86,9 +108,94 @@ export default function App() {
   const [queueExpanded, setQueueExpanded] = useState(false)
   const [titleQuery, setTitleQuery] = useState(initial.title)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
-  const [siriFocus, setSiriFocus] = useState(initial.siriFocus)
+  const siriFocus = initial.siriFocus
   const player = useAudioPlayer()
   const autoplayStarted = useRef(false)
+  const [saved] = useState(() => readSaved<Session | null>('session', null))
+  const [favorites, setFavorites] = useState(() => readSaved<Track[]>('favorites', []))
+  const [collections, setCollections] = useState(() => readSaved<Collection[]>('collections', []))
+  const [collectionName, setCollectionName] = useState('')
+  const [results, setResults] = useState<Track[] | null>(null)
+  const [timer, setTimer] = useState<number | null>(null)
+  const [minutes, setMinutes] = useState('30')
+  const nowRef = useRef<HTMLElement>(null)
+  const [showMini, setShowMini] = useState(false)
+  const lastSession = useRef<Session | null>(null)
+  const { playlist, index, currentTime, pause } = player
+
+  useEffect(() => {
+    if (!playlist[index]) return
+    lastSession.current = { tracks: playlist, index, position: currentTime }
+  }, [playlist, index, currentTime])
+
+  useEffect(() => {
+    const persist = () => {
+      if (lastSession.current) saveLocal('session', lastSession.current)
+    }
+    const interval = window.setInterval(persist, 5000)
+    window.addEventListener('pagehide', persist)
+    document.addEventListener('visibilitychange', persist)
+    return () => {
+      window.clearInterval(interval)
+      window.removeEventListener('pagehide', persist)
+      document.removeEventListener('visibilitychange', persist)
+    }
+  }, [])
+
+  useEffect(() => saveLocal('favorites', favorites), [favorites])
+  useEffect(() => saveLocal('collections', collections), [collections])
+
+  useEffect(() => {
+    if (timer === null) return
+    const stop = () => {
+      if (Date.now() < timer) return
+      pause()
+      setTimer(null)
+    }
+    const timeout = window.setTimeout(stop, Math.max(0, timer - Date.now()))
+    document.addEventListener('visibilitychange', stop)
+    return () => {
+      window.clearTimeout(timeout)
+      document.removeEventListener('visibilitychange', stop)
+    }
+  }, [timer, pause])
+
+  useEffect(() => {
+    if (view !== 'home' || !nowRef.current) return
+    const observer = new IntersectionObserver(([entry]) => setShowMini(!entry.isIntersecting))
+    observer.observe(nowRef.current)
+    return () => observer.disconnect()
+  }, [view])
+
+  function toggleFavorite(track: Track) {
+    setFavorites((previous) =>
+      previous.some((item) => item.id === track.id)
+        ? previous.filter((item) => item.id !== track.id)
+        : [...previous, track],
+    )
+  }
+
+  async function searchCatalog() {
+    const query = normalizeTitle(titleQuery)
+    if (!query || catalogLoading) return
+    setCatalogLoading(true)
+    setResults(null)
+    setStatus(null)
+    try {
+      const tracks = await fetchTracksForSlugs(effectiveSlugs)
+      setResults(tracks.filter((track) => normalizeTitle(track.title).includes(query)))
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Catalogo non disponibile')
+    } finally {
+      setCatalogLoading(false)
+    }
+  }
+
+  function playTracks(tracks: Track[], start = 0, position = 0) {
+    setStatus(null)
+    void player.setPlaylist(tracks, true, start, position)
+  }
+
 
   const effectiveSlugs: SectionSlug[] = selected.includes('tutto')
     ? ['tutto']
@@ -116,7 +223,6 @@ export default function App() {
         )
         if (!matched) {
           setStatus(`Brano non trovato: «${startTitle.trim()}»`)
-          await player.setPlaylist([], false)
           return
         }
         playlist = ordered
@@ -142,9 +248,8 @@ export default function App() {
       else url.searchParams.delete('title')
       if (autoplay) url.searchParams.set('play', '1')
       else url.searchParams.delete('play')
-      if (siriFocus || matchedTitle) url.searchParams.set('siri', '1')
+      if (siriFocus) url.searchParams.set('siri', '1')
       window.history.replaceState({}, '', url)
-      if (matchedTitle) setSiriFocus(true)
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Errore di rete')
     } finally {
@@ -165,6 +270,7 @@ export default function App() {
   }, [initial.autoplay, initial.mode, initial.sections, initial.title])
 
   function toggleSection(slug: SectionSlug) {
+    setResults(null)
     if (slug === 'tutto') {
       setSelected(['tutto'])
       return
@@ -222,8 +328,7 @@ export default function App() {
           <span className="gesture-title">Tocca per ascoltare</span>
           <span className="gesture-sub">{player.current.title}</span>
           <span className="gesture-hint">
-            iPhone blocca l’audio automatico da Siri. Un tap e continua anche
-            coi brani successivi.
+            Il browser richiede un tocco per avviare l’audio.
           </span>
         </button>
       )}
@@ -268,7 +373,7 @@ export default function App() {
         </header>
       )}
 
-      <section className="now" aria-live="polite">
+      <section className="now" ref={nowRef}>
         {player.current ? (
           <>
             <div className="now-art-wrap">
@@ -293,20 +398,16 @@ export default function App() {
                     mode === 'shuffle' ? 'casuale' : 'in ordine'
                   }`}
               </p>
-              <div
-                className="seek"
-                role="slider"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(progress * 100)}
-                tabIndex={0}
-                onClick={(e) => {
-                  const rect = e.currentTarget.getBoundingClientRect()
-                  player.seek((e.clientX - rect.left) / rect.width)
-                }}
-              >
-                <div className="seek-bar" style={{ width: `${progress * 100}%` }} />
-              </div>
+              <input
+                className="seek-input"
+                type="range"
+                aria-label="Posizione di riproduzione"
+                min={0}
+                max={1000}
+                value={Math.round(progress * 1000)}
+                disabled={!player.duration}
+                onChange={(event) => player.seek(Number(event.target.value) / 1000)}
+              />
               <div className="times">
                 <span>{formatDuration(player.currentTime)}</span>
                 <span>{formatDuration(player.duration)}</span>
@@ -326,7 +427,11 @@ export default function App() {
                   ›
                 </button>
               </div>
-              {player.error && <p className="error">{player.error}</p>}
+              <button className="btn ghost small" onClick={() => toggleFavorite(player.current!)}
+                aria-pressed={favorites.some((track) => track.id === player.current?.id)}>
+                {favorites.some((track) => track.id === player.current?.id) ? '★ Nei preferiti' : '☆ Aggiungi ai preferiti'}
+              </button>
+              {player.error && <p className="error" role="alert">{player.error}</p>}
               {player.needsGesture && (
                 <p className="gesture-inline">
                   Tocca ▶ qui sopra oppure il pulsante grande per avviare.
@@ -337,9 +442,28 @@ export default function App() {
         ) : (
           <div className="now-empty">
             <p>{status || 'Nessun brano in riproduzione.'}</p>
+            {saved?.tracks[saved.index] && (
+              <button className="btn primary" disabled={catalogLoading}
+                onClick={() => playTracks(saved.tracks, saved.index, saved.position)}>
+                Riprendi · {saved.tracks[saved.index].title} · {formatDuration(saved.position)}
+              </button>
+            )}
           </div>
         )}
       </section>
+
+      {player.current && (
+        <section className="chooser listening-tools" aria-label="Timer di spegnimento">
+          <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
+            {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}
+          </select></label>
+          <button className="btn ghost small" onClick={() =>
+            setTimer(timer === null ? Date.now() + Number(minutes) * 60_000 : null)}>
+            {timer === null ? 'Avvia timer' : 'Annulla timer'}
+          </button>
+          {timer !== null && <span role="status">Pausa alle {new Date(timer).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span>}
+        </section>
+      )}
 
       {!siriFocus && (
       <section className="chooser" id="scegli">
@@ -350,40 +474,26 @@ export default function App() {
         </p>
 
         <label className="title-search">
-          <span>Avvia da titolo</span>
+          <span>Cerca un brano</span>
           <div className="title-row">
             <input
               type="search"
               placeholder="es. Sorgerà"
               value={titleQuery}
-              onChange={(e) => setTitleQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && titleQuery.trim()) {
-                  void startPlayback(
-                    effectiveSlugs,
-                    mode,
-                    true,
-                    titleQuery.trim(),
-                  )
-                }
-              }}
+              onChange={(e) => { setTitleQuery(e.target.value); setResults(null) }}
+              onKeyDown={(e) => { if (e.key === 'Enter') void searchCatalog() }}
             />
-            <button
-              className="btn primary"
-              disabled={catalogLoading || !titleQuery.trim()}
-              onClick={() =>
-                void startPlayback(
-                  effectiveSlugs,
-                  mode,
-                  true,
-                  titleQuery.trim(),
-                )
-              }
-            >
-              Riproduci titolo
-            </button>
+            <button className="btn primary" disabled={catalogLoading || !titleQuery.trim()}
+              onClick={() => void searchCatalog()}>Cerca</button>
           </div>
         </label>
+        {status && <p role="status">{status}</p>}
+        {results && (
+          <div aria-live="polite">
+            <p>{results.length ? `Risultati: ${results.length}` : 'Nessun risultato nelle sezioni selezionate.'}</p>
+            <TrackList tracks={results} onPlay={(i) => playTracks(results, i)} />
+          </div>
+        )}
 
         <div className="mode-toggle" role="group" aria-label="Modalità">
           <button
@@ -435,7 +545,6 @@ export default function App() {
                 effectiveSlugs,
                 mode,
                 true,
-                titleQuery.trim() || undefined,
               )
             }
           >
@@ -537,6 +646,53 @@ export default function App() {
         </section>
       )}
 
+      {!siriFocus && (
+        <section className="chooser" aria-label="Libreria personale">
+          <h2>Preferiti e raccolte</h2>
+          {favorites.length ? (
+            <>
+              <button className="btn ghost small" onClick={() => playTracks(favorites)}>Riproduci preferiti</button>
+              <TrackList tracks={favorites} onPlay={(i) => playTracks(favorites, i)} onRemove={toggleFavorite} />
+            </>
+          ) : <p>Aggiungi un brano ai preferiti dal lettore.</p>}
+          {playlist.length > 0 && (
+            <form className="title-row" onSubmit={(event) => {
+              event.preventDefault()
+              const name = collectionName.trim()
+              if (!name) return
+              setCollections((previous) => [...previous, { id: crypto.randomUUID(), name, tracks: playlist }])
+              setCollectionName('')
+            }}>
+              <input aria-label="Nome raccolta" placeholder="Nome raccolta" value={collectionName}
+                maxLength={80} onChange={(event) => setCollectionName(event.target.value)} />
+              <button className="btn primary small" disabled={!collectionName.trim()}>Salva coda</button>
+            </form>
+          )}
+          <ul className="library-list">
+            {collections.map((collection) => (
+              <li key={collection.id}>
+                <button className="queue-item" onClick={() => playTracks(collection.tracks)}>
+                  {collection.name} · {collection.tracks.length} brani
+                </button>
+                <button className="btn ghost small" aria-label={`Elimina ${collection.name}`}
+                  onClick={() => setCollections((list) => list.filter((item) => item.id !== collection.id))}>Elimina</button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {showMini && player.current && (
+        <aside className="mini-player" aria-label="Lettore compatto">
+          <button className="queue-item" onClick={() => nowRef.current?.scrollIntoView({ block: 'center' })}>
+            {player.current.title}
+          </button>
+          <button className="icon-btn" aria-label={player.playing ? 'Pausa' : 'Riproduci'}
+            onClick={() => void player.toggle()}>{player.playing ? '❚❚' : '▶'}</button>
+          <button className="icon-btn" aria-label="Successivo" onClick={player.playNext}>›</button>
+        </aside>
+      )}
+
       <footer className="foot">
         <p>
           Audio fornito pubblicamente da{' '}
@@ -552,6 +708,27 @@ export default function App() {
         </p>
       </footer>
     </div>
+  )
+}
+
+function TrackList({ tracks, onPlay, onRemove }: {
+  tracks: Track[]
+  onPlay: (index: number) => void
+  onRemove?: (track: Track) => void
+}) {
+  return (
+    <ul className="library-list">
+      {tracks.map((track, index) => (
+        <li key={track.id}>
+          <button className="queue-item" onClick={() => onPlay(index)}>
+            <span className="q-title">{track.title}</span>
+            <span className="q-meta">{track.sectionName}</span>
+          </button>
+          {onRemove && <button className="btn ghost small" aria-label={`Rimuovi ${track.title} dai preferiti`}
+            onClick={() => onRemove(track)}>Rimuovi</button>}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -608,9 +785,8 @@ function SiriGuide({
       <p className="brand">JW Ascolta</p>
       <h1>Siri e CarPlay</h1>
       <p className="lede">
-        Sì: tutti i comandi Siri possono funzionare in auto. Non aprire l’app
-        web — apri la playlist CarPlay (`/api/carplay`). L’iPhone riproduce la
-        coda e CarPlay mostra Now Playing.
+        Per iniziare, copia uno degli URL CarPlay qui sotto e incollalo
+        nell’azione «Apri URL» di un nuovo comando su iPhone. Provalo prima di partire.
       </p>
 
       <div className="url-box highlight">
@@ -618,8 +794,8 @@ function SiriGuide({
         <p className="section-lede" style={{ margin: 0 }}>
           Per <strong>ogni</strong> comando (sezione, casuale, per titolo): in
           Comandi usa <strong>Apri URL</strong> verso{' '}
-          <code style={{ display: 'inline' }}>/api/carplay</code>, non «Mostra
-          pagina web». Così non serve Chrome, né un tap, e la coda continua.
+          <code style={{ display: 'inline' }}>/api/carplay</code>. La gestione
+          della playlist dipende dall’app che apre il link su iPhone.
         </p>
       </div>
 
@@ -708,8 +884,8 @@ function SiriGuide({
           + titolo).
         </li>
         <li>
-          L’audio parte sul telefono e passa all’auto; usa Now Playing per
-          pausa / avanti / indietro.
+          Se la riproduzione si avvia, puoi usare «In riproduzione» per mettere
+          in pausa o cambiare brano.
         </li>
       </ol>
 
