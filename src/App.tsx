@@ -349,9 +349,11 @@ export default function App() {
           </div>
           <p className="lede">Musica, articoli audio e video da JW.org.</p>
           {!player.current && saved?.tracks[saved.index] && (
-            <button className="btn primary" disabled={catalogLoading}
+            <button className="btn primary resume-card" disabled={catalogLoading}
               onClick={() => playTracks(saved.tracks, saved.index, saved.position)}>
-              Riprendi ascolto · {saved.tracks[saved.index].title} · {formatDuration(saved.position)}
+              <span>▶ Riprendi ascolto</span>
+              <span>{formatDuration(saved.position)}</span>
+              <span className="resume-title">{saved.tracks[saved.index].title}</span>
             </button>
           )}
           <nav className="top-nav" aria-label="Libreria">
@@ -581,7 +583,7 @@ export default function App() {
       </section>
       )}
 
-      {!siriFocus && (
+      {!siriFocus && !libraryOpen && (
       <section className="siri-teaser" id="siri">
         <h2>Siri e CarPlay</h2>
         <p className="section-lede">

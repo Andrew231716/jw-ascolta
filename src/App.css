@@ -933,3 +933,56 @@ code {
 .now[hidden] {
   display: none;
 }
+
+.resume-card.btn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: .2rem .75rem;
+  align-items: baseline;
+  width: 100%;
+  margin-block: .75rem 1rem;
+  padding: .7rem .9rem;
+  border-radius: .9rem;
+  text-align: left;
+}
+
+.resume-title {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .88rem;
+  font-weight: 500;
+}
+
+.listening-library input,
+.listening-library select {
+  background: #10292d;
+  border-color: var(--line);
+  color-scheme: dark;
+}
+
+@media (max-width: 600px) {
+  .top-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .top-nav .nav-link {
+    justify-content: center;
+    text-align: center;
+    border-radius: .85rem;
+  }
+
+  .listening-library .mode-toggle {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .listening-library .mode-toggle .chip {
+    min-height: 44px;
+    padding: .5rem;
+    border-radius: .85rem;
+    font-size: .88rem;
+  }
+}
