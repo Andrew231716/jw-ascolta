@@ -12,6 +12,7 @@ import {
   type PlayMode,
   type SectionSlug,
 } from './catalog'
+import { listBookmarks } from './articleText'
 import { useAudioPlayer } from './useAudioPlayer'
 import { ListeningLibrary } from './ListeningLibrary'
 import './App.css'
@@ -21,12 +22,30 @@ type View = 'home' | 'siri'
 type Session = { tracks: Track[]; index: number; position: number }
 type Collection = { id: string; name: string; tracks: Track[] }
 
+function isTrack(value: unknown): value is Track {
+  if (!value || typeof value !== 'object') return false
+  const t = value as Track
+  return typeof t.id === 'string' && typeof t.title === 'string' && typeof t.url === 'string'
+}
+
 function readSaved<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem('jw-ascolta:' + key)
-    return value ? JSON.parse(value) : fallback
+    if (!value) return fallback
+    return JSON.parse(value) as T
   } catch {
     return fallback
+  }
+}
+
+function readSession(): Session | null {
+  const raw = readSaved<Session | null>('session', null)
+  if (!raw || !Array.isArray(raw.tracks) || !raw.tracks.every(isTrack)) return null
+  if (!Number.isFinite(raw.index) || !raw.tracks[raw.index]) return null
+  return {
+    tracks: raw.tracks,
+    index: raw.index,
+    position: Number(raw.position) || 0,
   }
 }
 
@@ -72,6 +91,11 @@ function readQuery() {
     params.get('focus') === '1' ||
     params.get('carplay') === '1' ||
     (autoplay && Boolean(title.trim()))
+  const articleUrl = params.get('articleUrl') || ''
+  const articleId = params.get('article') || ''
+  const articleTitle = params.get('articleTitle') || ''
+  const openLibrary =
+    params.get('view') === 'library' || Boolean(articleUrl && articleId)
   return {
     sections: resolveSectionInput(sectionsRaw || 'tutto'),
     mode: resolvedMode,
@@ -79,6 +103,11 @@ function readQuery() {
     view: view as View,
     title: title.trim(),
     siriFocus,
+    openLibrary,
+    initialReader:
+      articleUrl && articleId
+        ? { id: articleId, title: articleTitle || 'Articolo', source: articleUrl }
+        : null,
   }
 }
 
@@ -108,16 +137,23 @@ export default function App() {
   const [status, setStatus] = useState<string | null>(null)
   const [later, setLater] = useState(() => readSaved<Track[]>('later', []))
   const [speed, setSpeed] = useState(1)
-  const [libraryOpen, setLibraryOpen] = useState(false)
+  const [stopAtEnd, setStopAtEnd] = useState(true)
+  const [libraryOpen, setLibraryOpen] = useState(Boolean(initial.openLibrary))
   const [queueExpanded, setQueueExpanded] = useState(false)
   const [titleQuery, setTitleQuery] = useState(initial.title)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const siriFocus = initial.siriFocus
   const player = useAudioPlayer()
   const autoplayStarted = useRef(false)
-  const [saved] = useState(() => readSaved<Session | null>('session', null))
-  const [favorites, setFavorites] = useState(() => readSaved<Track[]>('favorites', []))
-  const [collections, setCollections] = useState(() => readSaved<Collection[]>('collections', []))
+  const [saved] = useState(() => readSession())
+  const [favorites, setFavorites] = useState(() =>
+    readSaved<Track[]>('favorites', []).filter(isTrack),
+  )
+  const [collections, setCollections] = useState(() =>
+    readSaved<Collection[]>('collections', []).filter(
+      (c) => c && typeof c.id === 'string' && Array.isArray(c.tracks),
+    ),
+  )
   const [collectionName, setCollectionName] = useState('')
   const [results, setResults] = useState<Track[] | null>(null)
   const [timer, setTimer] = useState<number | null>(null)
@@ -125,7 +161,16 @@ export default function App() {
   const nowRef = useRef<HTMLElement>(null)
   const [showMini, setShowMini] = useState(false)
   const lastSession = useRef<Session | null>(null)
+  const [articleBookmarks, setArticleBookmarks] = useState(() => listBookmarks())
   const { playlist, index, currentTime, pause } = player
+
+  useEffect(() => {
+    player.setRepeat(!stopAtEnd)
+  }, [stopAtEnd])
+
+  useEffect(() => {
+    if (!libraryOpen) setArticleBookmarks(listBookmarks())
+  }, [libraryOpen])
 
   useEffect(() => {
     if (!playlist[index]) return
@@ -356,6 +401,16 @@ export default function App() {
               <span className="resume-title">{saved.tracks[saved.index].title}</span>
             </button>
           )}
+          {!libraryOpen && articleBookmarks[0] && (
+            <button
+              className="btn ghost resume-card"
+              onClick={() => setLibraryOpen(true)}
+            >
+              <span>▶ Riprendi articolo</span>
+              <span className="resume-title">{articleBookmarks[0].title}</span>
+              <span className="q-meta">«{articleBookmarks[0].snippet}»</span>
+            </button>
+          )}
           <nav className="top-nav" aria-label="Libreria">
             <button type="button" className="nav-link" aria-pressed={!libraryOpen}
               onClick={() => setLibraryOpen(false)}>Musica</button>
@@ -470,7 +525,14 @@ export default function App() {
             setSpeed(rate)
             player.setSpeed(rate)
           }}>{[0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label>
-          <label><input type="checkbox" onChange={(event) => player.setRepeat(!event.target.checked)} /> Ferma a fine coda</label>
+          <label>
+            <input
+              type="checkbox"
+              checked={stopAtEnd}
+              onChange={(event) => setStopAtEnd(event.target.checked)}
+            />{' '}
+            Ferma a fine coda
+          </label>
           <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
             {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}
           </select></label>
@@ -483,12 +545,19 @@ export default function App() {
       )}
 
       {!siriFocus && <div hidden={!libraryOpen}>
-        <ListeningLibrary active={libraryOpen} onPlay={playTracks} onAppend={player.append}
-          later={later} onLater={(track) => setLater((list) =>
+        <ListeningLibrary
+          active={libraryOpen}
+          initialReader={initial.initialReader}
+          onPlay={playTracks}
+          onAppend={player.append}
+          later={later}
+          onLater={(track) => setLater((list) =>
             list.some((item) => item.id === track.id) ? list.filter((item) => item.id !== track.id) : [...list, track])}
-          collections={collections} onSave={(id, track) => setCollections((list) => list.map((item) =>
-            item.id === id && !item.tracks.some((saved) => saved.id === track.id)
-              ? { ...item, tracks: [...item.tracks, track] } : item))} />
+          collections={collections}
+          onSave={(id, track) => setCollections((list) => list.map((item) =>
+            item.id === id && !item.tracks.some((savedTrack) => savedTrack.id === track.id)
+              ? { ...item, tracks: [...item.tracks, track] } : item))}
+        />
       </div>}
 
       {!siriFocus && !libraryOpen && (

@@ -105,6 +105,7 @@ export function normalizeTitle(raw: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/["'`«»]/g, '')
+    .replace(/[.,;:!?…¡¿()[\]{}]/g, ' ')
     .replace(/^\d+[.\-) ]\s*/g, '')
     .replace(/[_+/]+/g, ' ')
     .replace(/\s+/g, ' ')

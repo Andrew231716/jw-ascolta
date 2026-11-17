@@ -301,8 +301,12 @@ async function pubTracks(
     )
     const slice = files.slice(offset, offset + 24)
     return {
-      tracks: slice.map((item) => ({
-        id: 'pub-mrt-' + (item.docid || item.track),
+      tracks: slice.map((item, index) => ({
+        id:
+          'pub-mrt-' +
+          (item.docid || item.track || 'x') +
+          '-' +
+          (item.track || index),
         title: String(item.title || 'Articolo'),
         url: String(item.file!.url),
         duration: Number(item.duration ?? 0),

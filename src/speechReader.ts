@@ -1,7 +1,14 @@
-/** Voce narrativa neurale cloud (Isabella) — non quella del dispositivo. */
+/** Voce narrativa neurale cloud — non quella del dispositivo. */
 
-export type SpeechStatus = 'idle' | 'loading' | 'speaking' | 'paused' | 'error'
+export type SpeechStatus =
+  | 'idle'
+  | 'loading'
+  | 'speaking'
+  | 'paused'
+  | 'error'
+  | 'completed'
 export type NarrationVoiceId = 'isabella' | 'elsa' | 'diego' | 'giuseppe'
+export type NarrationRate = '-15%' | '-8%' | '+0%' | '+10%'
 
 export const NARRATION_VOICES: Array<{ id: NarrationVoiceId; label: string }> = [
   { id: 'isabella', label: 'Isabella (narrativa)' },
@@ -10,24 +17,27 @@ export const NARRATION_VOICES: Array<{ id: NarrationVoiceId; label: string }> = 
   { id: 'giuseppe', label: 'Giuseppe (multilingue)' },
 ]
 
+export const NARRATION_RATES: Array<{ id: NarrationRate; label: string }> = [
+  { id: '-15%', label: 'Più lenta' },
+  { id: '-8%', label: 'Narrativa' },
+  { id: '+0%', label: 'Normale' },
+  { id: '+10%', label: 'Più veloce' },
+]
+
 export type SpeakProgress = {
-  /** Absolute sentence index in the article. */
   sentenceIndex: number
-  /** Word index within that sentence. */
   wordIndex: number
-  /** Index within the current play queue (0-based). */
   queueIndex: number
   queueLength: number
 }
 
 export type SpeakHandle = {
-  stop: () => void
+  stop: (opts?: { completed?: boolean }) => void
   pause: () => void
   resume: () => void
   getProgress: () => SpeakProgress | null
 }
 
-/** Silent WAV — unlocks Web Audio autoplay during a user gesture. */
 const SILENT_WAV =
   'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
 
@@ -44,10 +54,6 @@ function ensureAudioElement(): HTMLAudioElement {
   return el
 }
 
-/**
- * Call synchronously inside the click handler (before any await)
- * so Safari/Chrome keep the audio unlock across the TTS fetch.
- */
 export function primeNarrationAudio(): void {
   const el = ensureAudioElement()
   try {
@@ -75,11 +81,15 @@ export function primeNarrationAudio(): void {
   }
 }
 
-async function fetchNeuralChunk(text: string, voice: NarrationVoiceId): Promise<Blob> {
+async function fetchNeuralChunk(
+  text: string,
+  voice: NarrationVoiceId,
+  rate: NarrationRate,
+): Promise<Blob> {
   const res = await fetch('/api/tts', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text, voice }),
+    body: JSON.stringify({ text, voice, rate }),
   })
   if (!res.ok) {
     let detail = ''
@@ -102,26 +112,26 @@ function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length
 }
 
-/**
- * Speaks sentence texts one-by-one (fetch → play → prefetch next).
- * `sentenceIndexes[i]` maps queue item i → absolute article sentence index.
- */
 export async function speakSentences(
   texts: string[],
   opts: {
     sentenceIndexes: number[]
     firstWordOffset?: number
     voice?: NarrationVoiceId
+    rate?: NarrationRate
     onStatus?: (status: SpeechStatus, detail?: string) => void
     onProgress?: (progress: SpeakProgress) => void
+    onChunkReady?: (blob: Blob, queueIndex: number) => void
   },
 ): Promise<SpeakHandle> {
   const {
     sentenceIndexes,
     firstWordOffset = 0,
     voice = 'isabella',
+    rate = '-8%',
     onStatus,
     onProgress,
+    onChunkReady,
   } = opts
 
   const queue = texts
@@ -140,7 +150,7 @@ export async function speakSentences(
   let pausedGate: Promise<void> | null = null
   let resumeGate: (() => void) | null = null
   const audioEl = ensureAudioElement()
-  const objectUrls: string[] = []
+  let currentUrl: string | null = null
   let playIndex = 0
   let currentWord = firstWordOffset
   let finished = false
@@ -160,15 +170,14 @@ export async function speakSentences(
     if (p) onProgress?.(p)
   }
 
-  const revokeUrls = () => {
-    for (const url of objectUrls) {
-      try {
-        URL.revokeObjectURL(url)
-      } catch {
-        /* ignore */
-      }
+  const revokeCurrent = () => {
+    if (!currentUrl) return
+    try {
+      URL.revokeObjectURL(currentUrl)
+    } catch {
+      /* ignore */
     }
-    objectUrls.length = 0
+    currentUrl = null
   }
 
   const detach = () => {
@@ -182,6 +191,7 @@ export async function speakSentences(
     } catch {
       /* ignore */
     }
+    revokeCurrent()
   }
 
   const cleanup = () => {
@@ -191,7 +201,6 @@ export async function speakSentences(
       pausedGate = null
     }
     detach()
-    revokeUrls()
     playIndex = 0
     currentWord = 0
   }
@@ -203,29 +212,30 @@ export async function speakSentences(
   }
 
   const playBlob = (blob: Blob, wordsInClip: number, wordBase: number) =>
-    new Promise<void>((resolve) => {
+    new Promise<'ok' | 'error'>((resolve) => {
       if (aborted) {
-        resolve()
+        resolve('ok')
         return
       }
+      revokeCurrent()
       const url = URL.createObjectURL(blob)
-      objectUrls.push(url)
+      currentUrl = url
       currentWord = wordBase
       emitProgress()
 
       let settled = false
-      const done = () => {
+      const done = (result: 'ok' | 'error') => {
         if (settled) return
         settled = true
         window.clearInterval(abortWatch)
         audioEl.onended = null
         audioEl.onerror = null
         audioEl.ontimeupdate = null
-        resolve()
+        resolve(result)
       }
 
       const abortWatch = window.setInterval(() => {
-        if (aborted) done()
+        if (aborted) done('ok')
       }, 120)
 
       audioEl.ontimeupdate = () => {
@@ -235,8 +245,8 @@ export async function speakSentences(
         currentWord = wordBase + local
         emitProgress()
       }
-      audioEl.onended = () => done()
-      audioEl.onerror = () => done()
+      audioEl.onended = () => done('ok')
+      audioEl.onerror = () => done('error')
       audioEl.muted = false
       audioEl.src = url
 
@@ -256,7 +266,7 @@ export async function speakSentences(
 
   const run = async () => {
     try {
-      let prefetch: Promise<Blob> | null = fetchNeuralChunk(queue[0].text, voice)
+      let prefetch: Promise<Blob> | null = fetchNeuralChunk(queue[0].text, voice, rate)
 
       for (let i = 0; i < queue.length; i += 1) {
         if (aborted) return
@@ -264,13 +274,13 @@ export async function speakSentences(
         currentWord = i === 0 ? firstWordOffset : 0
         emitProgress()
 
-        const blob = await (prefetch ?? fetchNeuralChunk(queue[i].text, voice))
+        const blob = await (prefetch ?? fetchNeuralChunk(queue[i].text, voice, rate))
         prefetch = null
         if (aborted) return
+        onChunkReady?.(blob, i)
 
-        // Prefetch next while current plays.
         if (i + 1 < queue.length) {
-          prefetch = fetchNeuralChunk(queue[i + 1].text, voice)
+          prefetch = fetchNeuralChunk(queue[i + 1].text, voice, rate)
         }
 
         await waitIfPaused()
@@ -278,7 +288,12 @@ export async function speakSentences(
 
         const wordsInClip = countWords(queue[i].text) || 1
         const wordBase = i === 0 ? firstWordOffset : 0
-        await playBlob(blob, wordsInClip, wordBase)
+        const result = await playBlob(blob, wordsInClip, wordBase)
+        if (aborted) return
+        if (result === 'error') {
+          onStatus?.('error', 'Errore audio su questa frase. Riprova o salta avanti.')
+          return
+        }
         await waitIfPaused()
         if (aborted) return
       }
@@ -286,7 +301,7 @@ export async function speakSentences(
       if (!aborted) {
         finished = true
         cleanup()
-        onStatus?.('idle')
+        onStatus?.('completed')
       }
     } catch (err) {
       if (aborted) return
@@ -301,16 +316,14 @@ export async function speakSentences(
   void run()
 
   return {
-    stop() {
+    stop(opts) {
       aborted = true
       finished = true
       cleanup()
-      onStatus?.('idle')
+      onStatus?.(opts?.completed ? 'completed' : 'idle')
     },
     pause() {
-      if (!audioEl.paused) {
-        audioEl.pause()
-      }
+      if (!audioEl.paused) audioEl.pause()
       if (!pausedGate) {
         pausedGate = new Promise<void>((resolve) => {
           resumeGate = resolve
@@ -338,12 +351,12 @@ export async function speakSentences(
   }
 }
 
-/** @deprecated Prefer speakSentences — kept for simple whole-text calls. */
 export async function speakArticle(
   text: string,
   opts: {
     title?: string
     voice?: NarrationVoiceId
+    rate?: NarrationRate
     onStatus?: (status: SpeechStatus, detail?: string) => void
   } = {},
 ): Promise<SpeakHandle> {
@@ -351,6 +364,7 @@ export async function speakArticle(
   return speakSentences([payload], {
     sentenceIndexes: [0],
     voice: opts.voice,
+    rate: opts.rate,
     onStatus: opts.onStatus,
   })
 }

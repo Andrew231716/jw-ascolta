@@ -3,7 +3,7 @@
 App web personale per riprodurre **cantici, canzoni e musica** dalla sezione [Musica di JW.org](https://www.jw.org/it/biblioteca-digitale/musica/).
 
 **Live (Vercel):** https://jw-ascolta.vercel.app  
-**Mirror (GitHub Pages):** https://andrew231716.github.io/jw-ascolta/  
+**Mirror (GitHub Pages):** https://andrew231716.github.io/jw-ascolta/ *(solo UI statica — senza `/api`, quindi niente catalogo articoli, TTS, CarPlay HLS)*  
 **Repo:** https://github.com/Andrew231716/jw-ascolta
 
 ## Funzioni
@@ -13,7 +13,8 @@ App web personale per riprodurre **cantici, canzoni e musica** dalla sezione [Mu
 - Modalità **casuale** o **in ordine**
 - Controlli sulla schermata di blocco e **Now Playing CarPlay** (Media Session)
 - **Tutti i comandi Siri in CarPlay** via `/api/carplay` (HLS + Apri URL)
-- API `/api/play` (MP3), `/api/playlist` (HLS/M3U), `/api/carplay` (HLS)
+- Articoli senza MP3 (e anche con MP3) leggibili con voce neurale **Isabella**, selezione inizio/fine, ripresa posizione
+- API `/api/play` (MP3), `/api/playlist` (HLS/M3U), `/api/carplay` (HLS), `/api/tts`, `/api/listening`
 - Installabile come PWA (Aggiungi a Home)
 
 ## Avvio

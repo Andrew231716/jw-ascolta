@@ -46,8 +46,10 @@ export default async function handler(req: Request): Promise<Response> {
     const slugs = resolveSectionSlugs(sectionsRaw)
     const tracks = await loadTracks(slugs)
     const ordered = buildOrderedTracks(tracks, mode, title)
-    if (!ordered) {
-      return new Response('brano non trovato', { status: 404 })
+    if (!ordered || ordered.length === 0) {
+      return new Response(title.trim() ? 'brano non trovato' : 'catalogo vuoto', {
+        status: 404,
+      })
     }
     const slice = ordered.slice(0, limit)
     const body = wantHls ? toHls(slice) : toM3u(slice)
@@ -62,7 +64,8 @@ export default async function handler(req: Request): Promise<Response> {
           ? 'inline; filename="jw-ascolta.m3u8"'
           : 'inline; filename="jw-ascolta.m3u"',
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'public, max-age=120',
+        'Cache-Control': 'private, no-store',
+        Vary: 'Accept',
       },
     })
   } catch (err) {

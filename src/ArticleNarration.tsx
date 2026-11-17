@@ -10,8 +10,12 @@ import {
   type NarrationBookmark,
 } from './articleText'
 import {
+  NARRATION_RATES,
+  NARRATION_VOICES,
   primeNarrationAudio,
   speakSentences,
+  type NarrationRate,
+  type NarrationVoiceId,
   type SpeakHandle,
   type SpeakProgress,
   type SpeechStatus,
@@ -45,26 +49,41 @@ export function ArticleNarration({
   const [startWord, setStartWord] = useState(0)
   const [endSentence, setEndSentence] = useState<number | null>(null)
   const [endWord, setEndWord] = useState<number | null>(null)
+  const [voice, setVoice] = useState<NarrationVoiceId>('isabella')
+  const [rate, setRate] = useState<NarrationRate>('-8%')
   const [status, setStatus] = useState<SpeechStatus>('idle')
   const [detail, setDetail] = useState('')
   const [progress, setProgress] = useState<SpeakProgress | null>(null)
   const [bookmark, setBookmark] = useState<NarrationBookmark | null>(null)
+  const [shareNote, setShareNote] = useState('')
+  const audioChunksRef = useRef<Blob[]>([])
   const speechRef = useRef<SpeakHandle | null>(null)
   const sentencesRef = useRef<ArticleSentence[]>([])
-  const rangeRef = useRef({ startSentence: 0, startWord: 0, endSentence: null as number | null, endWord: null as number | null })
+  const rangeRef = useRef({
+    startSentence: 0,
+    startWord: 0,
+    endSentence: null as number | null,
+    endWord: null as number | null,
+  })
   const articleMeta = useRef({ articleId, title, source })
+  const voiceRef = useRef(voice)
+  const rateRef = useRef(rate)
 
   useEffect(() => {
     articleMeta.current = { articleId, title, source }
   }, [articleId, title, source])
-
   useEffect(() => {
     sentencesRef.current = sentences
   }, [sentences])
-
   useEffect(() => {
     rangeRef.current = { startSentence, startWord, endSentence, endWord }
   }, [startSentence, startWord, endSentence, endWord])
+  useEffect(() => {
+    voiceRef.current = voice
+  }, [voice])
+  useEffect(() => {
+    rateRef.current = rate
+  }, [rate])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -86,18 +105,37 @@ export function ArticleNarration({
         const units = splitSentences(payload.text)
         setArticle(payload)
         setSentences(units)
+
+        const params = new URLSearchParams(window.location.search)
+        const qStart = Number(params.get('ns'))
+        const qEnd = Number(params.get('ne'))
         const saved = loadBookmark(articleId)
         setBookmark(saved)
-        if (saved && saved.sentenceIndex < units.length) {
+
+        if (Number.isFinite(qStart) && qStart >= 0 && qStart < units.length) {
+          setStartSentence(qStart)
+          setStartWord(0)
+          if (Number.isFinite(qEnd) && qEnd >= qStart && qEnd < units.length) {
+            setEndSentence(qEnd)
+            setEndWord(null)
+          }
+        } else if (saved && saved.sentenceIndex < units.length) {
           setStartSentence(saved.sentenceIndex)
-          setStartWord(Math.min(saved.wordIndex, Math.max(0, units[saved.sentenceIndex].words.length - 1)))
+          setStartWord(
+            Math.min(saved.wordIndex, Math.max(0, units[saved.sentenceIndex].words.length - 1)),
+          )
           setEndSentence(
             saved.endSentenceIndex !== null && saved.endSentenceIndex < units.length
               ? saved.endSentenceIndex
               : null,
           )
           setEndWord(saved.endWordIndex)
-          setSelectMode('start')
+          if (saved.voice && NARRATION_VOICES.some((v) => v.id === saved.voice)) {
+            setVoice(saved.voice as NarrationVoiceId)
+          }
+          if (saved.rate && NARRATION_RATES.some((r) => r.id === saved.rate)) {
+            setRate(saved.rate as NarrationRate)
+          }
         } else {
           setStartSentence(0)
           setStartWord(0)
@@ -130,6 +168,8 @@ export function ArticleNarration({
       startWordIndex: range.startWord,
       snippet: snippetAt(units, p.sentenceIndex, p.wordIndex),
       updatedAt: Date.now(),
+      voice: voiceRef.current,
+      rate: rateRef.current,
     }
     saveBookmark(next)
     setBookmark(next)
@@ -150,8 +190,13 @@ export function ArticleNarration({
     return () => {
       window.removeEventListener('pagehide', onHide)
       document.removeEventListener('visibilitychange', onVisibility)
-      onHide()
-      speechRef.current?.stop()
+      const handle = speechRef.current
+      if (handle) {
+        handle.pause()
+        persistFromProgress(handle.getProgress())
+        // Stop audio without clearing the bookmark (idle ≠ completed).
+        handle.stop()
+      }
       speechRef.current = null
     }
   }, [articleId])
@@ -220,6 +265,7 @@ export function ArticleNarration({
     if (!sentences.length || status === 'loading') return
     primeNarrationAudio()
     speechRef.current?.stop()
+    audioChunksRef.current = []
 
     let from = startSentence
     let word = startWord
@@ -247,7 +293,7 @@ export function ArticleNarration({
     setStatus('loading')
     setDetail('')
     setProgress({
-      sentenceIndex: sliced.from,
+      sentenceIndex: sliced.sentenceIndexes[0] ?? sliced.from,
       wordIndex: sliced.firstWord,
       queueIndex: 0,
       queueLength: sliced.texts.length,
@@ -256,17 +302,26 @@ export function ArticleNarration({
     speechRef.current = await speakSentences(sliced.texts, {
       sentenceIndexes: sliced.sentenceIndexes,
       firstWordOffset: sliced.firstWord,
-      voice: 'isabella',
+      voice,
+      rate,
+      onChunkReady(blob) {
+        audioChunksRef.current.push(blob)
+      },
       onStatus(next, info) {
         setStatus(next)
         if (info) setDetail(info)
         if (next === 'paused' || next === 'speaking') {
           persistFromProgress(speechRef.current?.getProgress() ?? null)
         }
-        if (next === 'idle') {
+        if (next === 'completed') {
           clearBookmark(articleId)
           setBookmark(null)
           setProgress(null)
+          setDetail('Lettura completata')
+        }
+        // idle from stop/close: keep bookmark
+        if (next === 'idle') {
+          setProgress(speechRef.current?.getProgress() ?? progress)
         }
       },
       onProgress(p) {
@@ -281,8 +336,12 @@ export function ArticleNarration({
       persistFromProgress(speechRef.current?.getProgress() ?? null)
       return
     }
-    if (status === 'paused') {
+    if (status === 'paused' || status === 'error') {
       primeNarrationAudio()
+      if (status === 'error') {
+        void startPlayback(true)
+        return
+      }
       speechRef.current?.resume()
     }
   }
@@ -293,7 +352,7 @@ export function ArticleNarration({
     speechRef.current?.stop()
     speechRef.current = null
     setStatus('idle')
-    setDetail('')
+    setDetail('Posizione salvata')
   }
 
   function resetRange() {
@@ -304,24 +363,63 @@ export function ArticleNarration({
     setSelectMode('start')
   }
 
+  async function shareRange() {
+    const url = new URL(window.location.href)
+    url.searchParams.set('view', 'library')
+    url.searchParams.set('article', articleId)
+    url.searchParams.set('articleUrl', source)
+    url.searchParams.set('articleTitle', article?.title || title)
+    url.searchParams.set('ns', String(startSentence))
+    if (endSentence !== null) url.searchParams.set('ne', String(endSentence))
+    else url.searchParams.delete('ne')
+    const link = url.toString()
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: article?.title || title, url: link })
+      } else {
+        await navigator.clipboard.writeText(link)
+      }
+      setShareNote('Link al brano copiato')
+    } catch {
+      setShareNote(link)
+    }
+  }
+
+  function downloadAudio() {
+    const chunks = audioChunksRef.current
+    if (!chunks.length) {
+      setShareNote('Ascolta almeno una frase, poi scarica.')
+      return
+    }
+    const blob = new Blob(chunks, { type: 'audio/mpeg' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${(article?.title || title || 'articolo').slice(0, 60)}.mp3`
+    a.click()
+    URL.revokeObjectURL(url)
+    setShareNote('Download avviato')
+  }
+
   const pausedHere = status === 'paused' && progress
   const currentSentence = progress?.sentenceIndex
   const currentWord = progress?.wordIndex
 
   const statusLine = useMemo(() => {
-    if (status === 'loading') return 'Preparazione voce Isabella…'
+    if (status === 'loading') return 'Preparazione voce…'
     if (status === 'speaking' && progress) {
       return `In lettura · frase ${progress.sentenceIndex + 1} di ${sentences.length}`
     }
     if (pausedHere && progress) {
       return `In pausa qui: «${snippetAt(sentences, progress.sentenceIndex, progress.wordIndex)}»`
     }
+    if (status === 'completed') return detail || 'Lettura completata'
     if (detail) return detail
     return ''
   }, [status, progress, pausedHere, sentences, detail])
 
   return (
-    <div className="article-narration" role="region" aria-label="Lettura articolo con Isabella">
+    <div className="article-narration" role="region" aria-label="Lettura articolo">
       <header className="article-narration-head">
         <button type="button" className="btn ghost small" onClick={onClose}>
           ← Chiudi
@@ -334,7 +432,7 @@ export function ArticleNarration({
 
       {!loading && !error && (
         <>
-          {bookmark && status === 'idle' && (
+          {bookmark && (status === 'idle' || status === 'completed') && (
             <div className="narration-resume-banner">
               <p>
                 Riprendi da: <em>«{bookmark.snippet}»</em>
@@ -371,6 +469,37 @@ export function ArticleNarration({
             </button>
           </div>
 
+          <div className="narration-options">
+            <label>
+              Voce
+              <select
+                value={voice}
+                onChange={(e) => setVoice(e.target.value as NarrationVoiceId)}
+                disabled={status === 'loading' || status === 'speaking'}
+              >
+                {NARRATION_VOICES.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Velocità
+              <select
+                value={rate}
+                onChange={(e) => setRate(e.target.value as NarrationRate)}
+                disabled={status === 'loading' || status === 'speaking'}
+              >
+                {NARRATION_RATES.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
           <p className="section-lede narration-hint">
             Tocca una <strong>frase</strong> o una <strong>parola</strong> per segnare{' '}
             {selectMode === 'start' ? 'dove far partire' : 'dove far terminare'} l’audio.
@@ -380,14 +509,16 @@ export function ArticleNarration({
           </p>
 
           <div className="narration-controls">
-            {status === 'speaking' || status === 'paused' ? (
+            {status === 'speaking' || status === 'paused' || status === 'error' ? (
               <>
                 <button type="button" className="btn primary" onClick={togglePause}>
                   {status === 'speaking'
                     ? 'Pausa'
                     : detail.includes('Tocca')
                       ? 'Tocca per ascoltare'
-                      : 'Riprendi'}
+                      : status === 'error'
+                        ? 'Riprova da qui'
+                        : 'Riprendi'}
                 </button>
                 <button type="button" className="btn ghost" onClick={stopPlayback}>
                   Stop · salva posizione
@@ -403,11 +534,22 @@ export function ArticleNarration({
                 {status === 'loading' ? 'Preparazione…' : 'Ascolta il brano selezionato'}
               </button>
             )}
+            <button type="button" className="btn ghost small" onClick={() => void shareRange()}>
+              Condividi brano
+            </button>
+            <button type="button" className="btn ghost small" onClick={downloadAudio}>
+              Scarica audio
+            </button>
           </div>
 
           {statusLine && (
             <p className="narration-status" role="status">
               {statusLine}
+            </p>
+          )}
+          {shareNote && (
+            <p className="narration-status" role="status">
+              {shareNote}
             </p>
           )}
           {status === 'error' && detail && (
@@ -443,18 +585,18 @@ export function ArticleNarration({
                     type="button"
                     className="sentence-pick"
                     onClick={() => pickSentence(sentence.index)}
-                    aria-label={`Frase ${sentence.index + 1}: seleziona come ${selectMode === 'start' ? 'inizio' : 'fine'}`}
+                    aria-label={`Frase ${sentence.index + 1}`}
                   >
                     {sentence.index + 1}
                   </button>
                   <span className="sentence-words">
-                    {sentence.words.map((word, wi) => {
+                    {sentence.words.map((wordItem, wi) => {
                       const wordCurrent =
                         isCurrent && currentWord !== undefined && wi === currentWord
                       const wordSelected = inRange(sentence.index, wi)
                       return (
                         <button
-                          key={word.id}
+                          key={wordItem.id}
                           type="button"
                           className={[
                             'article-word',
@@ -466,7 +608,7 @@ export function ArticleNarration({
                             .join(' ')}
                           onClick={() => pickWord(sentence.index, wi)}
                         >
-                          {word.text}
+                          {wordItem.text}
                         </button>
                       )
                     })}

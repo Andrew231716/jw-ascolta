@@ -279,6 +279,7 @@ export function buildPlaylist(tracks: Track[], mode: PlayMode): Track[] {
 export function normalizeTitle(raw: string): string {
   return normalizeAlias(raw)
     .replace(/[“”"'«»]/g, '')
+    .replace(/[.,;:!?…¡¿()[\]{}]/g, ' ')
     .replace(/^\d+[.\-) ]\s*/g, '')
     .replace(/\s+/g, ' ')
     .trim()

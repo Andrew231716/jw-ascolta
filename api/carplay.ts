@@ -38,8 +38,10 @@ export default async function handler(req: Request): Promise<Response> {
     const slugs = resolveSectionSlugs(sectionsRaw)
     const tracks = await loadTracks(slugs)
     const ordered = buildOrderedTracks(tracks, mode, title)
-    if (!ordered) {
-      return new Response('brano non trovato', { status: 404 })
+    if (!ordered || ordered.length === 0) {
+      return new Response(title.trim() ? 'brano non trovato' : 'catalogo vuoto', {
+        status: 404,
+      })
     }
 
     return new Response(toHls(ordered.slice(0, limit)), {
@@ -48,7 +50,9 @@ export default async function handler(req: Request): Promise<Response> {
         'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8',
         'Content-Disposition': 'inline; filename="jw-ascolta-carplay.m3u8"',
         'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'public, max-age=120',
+        // Title/mode/section must not share a cached playlist.
+        'Cache-Control': 'private, no-store',
+        Vary: 'Accept',
       },
     })
   } catch (err) {

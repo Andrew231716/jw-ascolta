@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ArticleNarration } from './ArticleNarration'
-import { loadBookmark } from './articleText'
+import { listBookmarks, loadBookmark, type NarrationBookmark } from './articleText'
 import { formatDuration, normalizeTitle, type Track } from './catalog'
 
 type Kind = 'articles' | 'videos'
@@ -13,6 +13,8 @@ type Page = {
   next: number | null
   failed?: number
 }
+
+type ReaderTarget = { id: string; title: string; source: string }
 
 const themes = [
   ['Famiglia e figli', /famigli|matrimoni|figli|genitor|coniug|educaz/],
@@ -41,7 +43,16 @@ async function api<T>(kind: Kind, signal: AbortSignal, topic?: string, offset = 
   return response.json()
 }
 
-export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, collections, onSave }: {
+export function ListeningLibrary({
+  active,
+  onPlay,
+  onAppend,
+  later,
+  onLater,
+  collections,
+  onSave,
+  initialReader = null,
+}: {
   active: boolean
   onPlay: (tracks: Track[], index?: number) => void
   onAppend: (track: Track) => void
@@ -49,6 +60,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   onLater: (track: Track) => void
   collections: { id: string; name: string }[]
   onSave: (id: string, track: Track) => void
+  initialReader?: ReaderTarget | null
 }) {
   const [kind, setKind] = useState<Kind>('articles')
   const [topics, setTopics] = useState<Topic[]>([])
@@ -65,12 +77,21 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   const [submitted, setSubmitted] = useState('')
   const [theme, setTheme] = useState('')
   const [official, setOfficial] = useState('')
-  const [reader, setReader] = useState<Pending | null>(null)
+  const [reader, setReader] = useState<ReaderTarget | null>(initialReader)
+  const [bookmarks, setBookmarks] = useState<NarrationBookmark[]>(() => listBookmarks())
   const [bookmarkTick, setBookmarkTick] = useState(0)
+
+  useEffect(() => {
+    if (initialReader) setReader(initialReader)
+  }, [initialReader])
 
   useEffect(() => {
     if (!active) setReader(null)
   }, [active])
+
+  useEffect(() => {
+    setBookmarks(listBookmarks())
+  }, [bookmarkTick, active, reader])
 
   useEffect(() => {
     if (!active) return
@@ -133,6 +154,10 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
     setLoading(Boolean(value))
   }
 
+  function openReader(target: ReaderTarget) {
+    setReader(target)
+  }
+
   const visible = tracks.filter((track) =>
     (!theme || tags(track).includes(theme)) &&
     (!official || track.topics.includes(official)),
@@ -150,6 +175,11 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
           onClose={() => {
             setReader(null)
             setBookmarkTick((n) => n + 1)
+            const url = new URL(window.location.href)
+            ;['article', 'articleUrl', 'articleTitle', 'ns', 'ne'].forEach((k) =>
+              url.searchParams.delete(k),
+            )
+            window.history.replaceState({}, '', url)
           }}
         />
       </section>
@@ -159,6 +189,33 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   return (
     <section className="chooser listening-library">
       <h2>Articoli e video</h2>
+
+      {bookmarks.length > 0 && (
+        <div className="narration-resume-banner">
+          <p><strong>In ascolto · riprendi</strong></p>
+          <ul className="bookmark-list">
+            {bookmarks.slice(0, 5).map((item) => (
+              <li key={item.articleId}>
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  onClick={() =>
+                    openReader({
+                      id: item.articleId,
+                      title: item.title,
+                      source: item.source,
+                    })
+                  }
+                >
+                  {item.title}
+                  <span className="q-meta"> · «{item.snippet}»</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="mode-toggle" role="group" aria-label="Tipo di contenuto">
         {([['articles', 'Articoli audio'], ['videos', 'Audio dei video']] as const).map(([id, name]) => (
           <button key={id} className={id === kind ? 'chip active' : 'chip'} aria-pressed={id === kind} onClick={() => {
@@ -227,30 +284,45 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
       )}
       {visible.length > 0 && <button className="btn primary small" onClick={() => onPlay(visible)}>Ascolta i risultati</button>}
       <ul className="library-list">
-        {visible.map((track, index) => <li className="listening-result" key={track.id}>
-          <button className="queue-item" onClick={() => onPlay(visible, index)}>
-            <span className="q-title">{track.title}</span>
-            <span className="q-meta">{kind === 'articles' ? 'Articolo audio' : 'Audio del video'} · {formatDuration(track.duration)} · {tags(track).join(' · ')}</span>
-          </button>
-          <a href={track.source} target="_blank" rel="noreferrer" aria-label={`Apri ${track.title} su JW.org`}>JW.org ↗</a>
-          <div className="result-actions">
-            <button className="btn ghost small" onClick={() => onAppend(track)}>Aggiungi alla coda</button>
-            <button className="btn ghost small" aria-pressed={later.some((item) => item.id === track.id)}
-              onClick={() => onLater(track)}>{later.some((item) => item.id === track.id) ? 'Salvato · rimuovi' : 'Ascolta dopo'}</button>
-            {collections.length > 0 && <select value="" aria-label={`Salva ${track.title} in raccolta`}
-              onChange={(event) => onSave(event.target.value, track)}>
-              <option value="">Salva in raccolta</option>
-              {collections.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>}
-          </div>
-        </li>)}
+        {visible.map((track, index) => (
+          <li className="listening-result" key={track.id}>
+            <button className="queue-item" onClick={() => onPlay(visible, index)}>
+              <span className="q-title">{track.title}</span>
+              <span className="q-meta">{kind === 'articles' ? 'Articolo audio' : 'Audio del video'} · {formatDuration(track.duration)} · {tags(track).join(' · ')}</span>
+            </button>
+            <a href={track.source} target="_blank" rel="noreferrer" aria-label={`Apri ${track.title} su JW.org`}>JW.org ↗</a>
+            <div className="result-actions">
+              <button className="btn ghost small" onClick={() => onAppend(track)}>Aggiungi alla coda</button>
+              {kind === 'articles' && track.source.includes('/it/') && (
+                <button
+                  className="btn ghost small"
+                  onClick={() =>
+                    openReader({
+                      id: track.id,
+                      title: track.title,
+                      source: track.source,
+                    })
+                  }
+                >
+                  Isabella · testo
+                </button>
+              )}
+              <button className="btn ghost small" aria-pressed={later.some((item) => item.id === track.id)}
+                onClick={() => onLater(track)}>{later.some((item) => item.id === track.id) ? 'Salvato · rimuovi' : 'Ascolta dopo'}</button>
+              {collections.length > 0 && <select value="" aria-label={`Salva ${track.title} in raccolta`}
+                onChange={(event) => onSave(event.target.value, track)}>
+                <option value="">Salva in raccolta</option>
+                {collections.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>}
+            </div>
+          </li>
+        ))}
       </ul>
       {pending.length > 0 && (
         <div className="pending-audio">
-          <h3>Senza audio JW.org · voce narrativa Isabella</h3>
+          <h3>Senza audio JW.org · voce narrativa</h3>
           <p className="section-lede">
-            Apri l’articolo, scegli da quale frase o parola far partire e terminare
-            l’ascolto. In pausa vedi dove sei; se esci, riprendi da lì.
+            Apri l’articolo, scegli inizio e fine, metti in pausa e riprendi da dove eri.
           </p>
           <ul className="library-list">
             {pending.map((item) => {
@@ -267,7 +339,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
                   <div className="result-actions">
                     <button
                       className="btn primary small"
-                      onClick={() => setReader(item)}
+                      onClick={() => openReader(item)}
                     >
                       {saved ? 'Riprendi con Isabella' : 'Apri testo · Isabella'}
                     </button>

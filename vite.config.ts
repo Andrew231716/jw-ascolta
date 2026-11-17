@@ -15,6 +15,10 @@ export default defineConfig({
         'icon-512.png',
         'icon-512-maskable.png',
       ],
+      workbox: {
+        navigateFallback: 'index.html',
+        navigateFallbackDenylist: [/^\/api\//],
+      },
       manifest: {
         name: 'JW Ascolta',
         short_name: 'JW Ascolta',
@@ -23,7 +27,7 @@ export default defineConfig({
         theme_color: '#0c2429',
         background_color: '#0c2429',
         display: 'standalone',
-        start_url: '/',
+        start_url: './',
         lang: 'it',
         icons: [
           {

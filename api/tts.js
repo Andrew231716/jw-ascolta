@@ -22,14 +22,18 @@ function pickVoice(raw) {
   return VOICES[key] || VOICES.isabella
 }
 
-async function synthesizeEdge(text, voiceCfg) {
+function normalizeRate(raw) {
+  const value = String(raw || '-8%').trim()
+  return /^[+-]?\d{1,2}%$/.test(value) ? value : '-8%'
+}
+
+async function synthesizeEdge(text, voiceCfg, rate) {
   const tts = new EdgeTTS({
     voice: voiceCfg.voice,
     lang: voiceCfg.lang,
     outputFormat: 'audio-24khz-48kbitrate-mono-mp3',
     saveSubtitles: false,
-    // Ritmo narrativo: leggermente più lento e calmo
-    rate: '-8%',
+    rate: normalizeRate(rate),
     pitch: '+0Hz',
     timeout: 45000,
   })
@@ -105,15 +109,18 @@ export default async function handler(req, res) {
   try {
     let text = ''
     let voice = 'isabella'
+    let rate = '-8%'
 
     if (req.method === 'GET') {
       text = String(req.query.text || '')
       voice = String(req.query.voice || 'isabella')
+      rate = String(req.query.rate || '-8%')
     } else {
       const body =
         typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {}
       text = String(body.text || '')
       voice = String(body.voice || 'isabella')
+      rate = String(body.rate || '-8%')
     }
 
     text = text.replace(/\s+/g, ' ').trim()
@@ -127,7 +134,7 @@ export default async function handler(req, res) {
     let audio
     let engine = 'edge-neural'
     try {
-      audio = await synthesizeEdge(text, voiceCfg)
+      audio = await synthesizeEdge(text, voiceCfg, rate)
     } catch (edgeErr) {
       try {
         audio = await synthesizeGoogle(text)

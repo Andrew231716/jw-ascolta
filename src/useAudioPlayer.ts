@@ -58,13 +58,21 @@ export function useAudioPlayer() {
     const onPause = () => setState((s) => ({ ...s, playing: false }))
     const onWaiting = () => setState((s) => ({ ...s, loading: true }))
     const onCanPlay = () => setState((s) => ({ ...s, loading: false }))
-    const onError = () =>
+    const onError = () => {
       setState((s) => ({
         ...s,
         loading: false,
         playing: false,
-        error: 'Errore di riproduzione. Prova il brano successivo.',
+        error: 'Errore di riproduzione. Passo al successivo…',
       }))
+      if (autoSkipTimer.current) window.clearTimeout(autoSkipTimer.current)
+      autoSkipTimer.current = window.setTimeout(() => {
+        const list = playlistRef.current
+        if (!list.length) return
+        const hasNext = indexRef.current + 1 < list.length
+        if (hasNext || repeat.current) playNextRef.current()
+      }, 700)
+    }
 
     audio.addEventListener('timeupdate', onTime)
     audio.addEventListener('play', onPlay)
@@ -74,6 +82,7 @@ export function useAudioPlayer() {
     audio.addEventListener('error', onError)
 
     return () => {
+      if (autoSkipTimer.current) window.clearTimeout(autoSkipTimer.current)
       audio.pause()
       audio.removeEventListener('timeupdate', onTime)
       audio.removeEventListener('play', onPlay)
@@ -85,9 +94,11 @@ export function useAudioPlayer() {
     }
   }, [])
 
-  const repeat = useRef(true)
+  const repeat = useRef(false)
   const speed = useRef(1)
   const pendingSeek = useRef<(() => void) | null>(null)
+  const autoSkipTimer = useRef<number | null>(null)
+  const playNextRef = useRef<() => void>(() => {})
 
   const loadAndPlay = useCallback(async (track: Track, autoplay: boolean, position = 0) => {
     const audio = audioRef.current
@@ -143,9 +154,11 @@ export function useAudioPlayer() {
     if (list.length === 0) return
     const next = (indexRef.current + 1) % list.length
     indexRef.current = next
-    setState((s) => ({ ...s, index: next }))
+    setState((s) => ({ ...s, index: next, error: null }))
     void loadAndPlay(list[next], true)
   }, [loadAndPlay])
+
+  playNextRef.current = playNext
 
   const playPrev = useCallback(() => {
     const audio = audioRef.current
@@ -409,7 +422,10 @@ export function useAudioPlayer() {
     jumpTo,
     moveTrack,
     moveTrackBy,
-    setRepeat: (enabled: boolean) => { repeat.current = enabled },
+    setRepeat: (enabled: boolean) => {
+      repeat.current = enabled
+    },
+    getRepeat: () => repeat.current,
     setSpeed: (rate: number) => {
       speed.current = rate
       if (audioRef.current) audioRef.current.playbackRate = rate
