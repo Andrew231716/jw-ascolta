@@ -1,11 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { ArticleNarration } from './ArticleNarration'
+import { loadBookmark } from './articleText'
 import { formatDuration, normalizeTitle, type Track } from './catalog'
-import {
-  primeNarrationAudio,
-  speakArticle,
-  type SpeakHandle,
-  type SpeechStatus,
-} from './speechReader'
 
 type Kind = 'articles' | 'videos'
 type Topic = { id: string; name: string }
@@ -69,23 +65,12 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   const [submitted, setSubmitted] = useState('')
   const [theme, setTheme] = useState('')
   const [official, setOfficial] = useState('')
-  const [ttsId, setTtsId] = useState<string | null>(null)
-  const [ttsStatus, setTtsStatus] = useState<SpeechStatus>('idle')
-  const [ttsDetail, setTtsDetail] = useState('')
-  const speechRef = useRef<SpeakHandle | null>(null)
+  const [reader, setReader] = useState<Pending | null>(null)
+  const [bookmarkTick, setBookmarkTick] = useState(0)
 
   useEffect(() => {
-    if (!active) {
-      speechRef.current?.stop()
-      speechRef.current = null
-      setTtsId(null)
-      setTtsStatus('idle')
-    }
+    if (!active) setReader(null)
   }, [active])
-
-  useEffect(() => () => {
-    speechRef.current?.stop()
-  }, [])
 
   useEffect(() => {
     if (!active) return
@@ -98,53 +83,6 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
       })
     return () => controller.abort()
   }, [active, kind])
-
-  async function readWithVoice(item: Pending) {
-    if (ttsId === item.id && ttsStatus === 'speaking') {
-      speechRef.current?.pause()
-      return
-    }
-    if (ttsId === item.id && ttsStatus === 'paused') {
-      // Second tap after autoplay block — still inside a user gesture.
-      speechRef.current?.resume()
-      return
-    }
-    // Unlock audio during this click, before any await (Safari/Chrome).
-    primeNarrationAudio()
-    speechRef.current?.stop()
-    setTtsId(item.id)
-    setTtsStatus('loading')
-    setTtsDetail('')
-    try {
-      const path = new URL(item.source).pathname
-      const response = await fetch(
-        '/api/article-text?' + new URLSearchParams({ path }),
-      )
-      if (!response.ok) throw new Error('Impossibile leggere il testo dell’articolo.')
-      const data = (await response.json()) as { title?: string; text?: string }
-      if (!data.text?.trim()) throw new Error('Testo articolo non trovato.')
-      speechRef.current = await speakArticle(data.text, {
-        title: data.title || item.title,
-        voice: 'isabella',
-        onStatus(status, detail) {
-          setTtsStatus(status)
-          if (detail) setTtsDetail(detail)
-          if (status === 'idle') setTtsId(null)
-        },
-      })
-    } catch (err) {
-      setTtsStatus('error')
-      setTtsDetail(err instanceof Error ? err.message : 'Lettura non riuscita')
-    }
-  }
-
-  function stopVoice() {
-    speechRef.current?.stop()
-    speechRef.current = null
-    setTtsId(null)
-    setTtsStatus('idle')
-    setTtsDetail('')
-  }
 
   useEffect(() => {
     if (!topic && !submitted) return
@@ -171,7 +109,6 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
           !(data.tracks?.length) &&
           !(data.pending?.length)
         ) {
-          // Keep loading; advance to the next category group.
           setOffset(data.next)
           return
         }
@@ -181,7 +118,6 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
         if (!controller.signal.aborted) { setError(err.message); setLoading(false) }
       })
     return () => controller.abort()
-    // Intentionally omit `topics`: reloading the topic list must not abort an in-flight title search.
   }, [kind, topic, offset, retry, submitted])
 
   function selectTopic(value: string) {
@@ -203,6 +139,22 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   )
   const themeOptions = [...new Set(tracks.flatMap(tags))].sort()
   const officialOptions = [...new Set(tracks.flatMap((track) => track.topics.slice(1)))].sort()
+
+  if (reader) {
+    return (
+      <section className="chooser listening-library">
+        <ArticleNarration
+          articleId={reader.id}
+          title={reader.title}
+          source={reader.source}
+          onClose={() => {
+            setReader(null)
+            setBookmarkTick((n) => n + 1)
+          }}
+        />
+      </section>
+    )
+  }
 
   return (
     <section className="chooser listening-library">
@@ -297,52 +249,32 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
         <div className="pending-audio">
           <h3>Senza audio JW.org · voce narrativa Isabella</h3>
           <p className="section-lede">
-            L’articolo è sul sito ma non c’è ancora l’MP3 ufficiale. Puoi
-            ascoltarlo con la voce neurale cloud Isabella (narrativa, non del
-            dispositivo).
+            Apri l’articolo, scegli da quale frase o parola far partire e terminare
+            l’ascolto. In pausa vedi dove sei; se esci, riprendi da lì.
           </p>
           <ul className="library-list">
             {pending.map((item) => {
-              const activeItem = ttsId === item.id
-              const label =
-                activeItem && ttsStatus === 'loading'
-                  ? 'Preparazione…'
-                  : activeItem && ttsStatus === 'speaking'
-                    ? 'Pausa'
-                    : activeItem && ttsStatus === 'paused'
-                      ? ttsDetail.includes('Tocca')
-                        ? 'Tocca per ascoltare'
-                        : 'Riprendi'
-                      : 'Ascolta con Isabella'
+              const saved = bookmarkTick >= 0 ? loadBookmark(item.id) : null
               return (
                 <li className="listening-result pending" key={item.id}>
                   <div className="queue-item">
                     <span className="q-title">{item.title}</span>
                     <span className="q-meta">
                       Nessun audio JW.org · {item.reason}
-                      {activeItem && ttsDetail ? ` · voce: ${ttsDetail}` : ''}
+                      {saved ? ` · riprendi: «${saved.snippet}»` : ''}
                     </span>
                   </div>
                   <div className="result-actions">
                     <button
                       className="btn primary small"
-                      disabled={activeItem && ttsStatus === 'loading'}
-                      onClick={() => void readWithVoice(item)}
+                      onClick={() => setReader(item)}
                     >
-                      {label}
+                      {saved ? 'Riprendi con Isabella' : 'Apri testo · Isabella'}
                     </button>
-                    {activeItem && (ttsStatus === 'speaking' || ttsStatus === 'paused') && (
-                      <button className="btn ghost small" onClick={stopVoice}>
-                        Stop
-                      </button>
-                    )}
                     <a href={item.source} target="_blank" rel="noreferrer">
                       Apri su JW.org ↗
                     </a>
                   </div>
-                  {activeItem && ttsStatus === 'error' && (
-                    <p className="error" role="alert">{ttsDetail}</p>
-                  )}
                 </li>
               )
             })}

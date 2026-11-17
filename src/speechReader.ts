@@ -10,10 +10,21 @@ export const NARRATION_VOICES: Array<{ id: NarrationVoiceId; label: string }> = 
   { id: 'giuseppe', label: 'Giuseppe (multilingue)' },
 ]
 
+export type SpeakProgress = {
+  /** Absolute sentence index in the article. */
+  sentenceIndex: number
+  /** Word index within that sentence. */
+  wordIndex: number
+  /** Index within the current play queue (0-based). */
+  queueIndex: number
+  queueLength: number
+}
+
 export type SpeakHandle = {
   stop: () => void
   pause: () => void
   resume: () => void
+  getProgress: () => SpeakProgress | null
 }
 
 /** Silent WAV — unlocks Web Audio autoplay during a user gesture. */
@@ -64,30 +75,6 @@ export function primeNarrationAudio(): void {
   }
 }
 
-function chunkText(text: string, maxLen = 1800): string[] {
-  const clean = text.replace(/\s+/g, ' ').trim()
-  if (!clean) return []
-  if (clean.length <= maxLen) return [clean]
-  const parts: string[] = []
-  let rest = clean
-  while (rest.length > maxLen) {
-    const slice = rest.slice(0, maxLen)
-    const breakAt = Math.max(
-      slice.lastIndexOf('. '),
-      slice.lastIndexOf('! '),
-      slice.lastIndexOf('? '),
-      slice.lastIndexOf('; '),
-      slice.lastIndexOf(', '),
-      slice.lastIndexOf(' '),
-    )
-    const cut = breakAt > maxLen * 0.35 ? breakAt + 1 : maxLen
-    parts.push(rest.slice(0, cut).trim())
-    rest = rest.slice(cut).trim()
-  }
-  if (rest) parts.push(rest)
-  return parts
-}
-
 async function fetchNeuralChunk(text: string, voice: NarrationVoiceId): Promise<Blob> {
   const res = await fetch('/api/tts', {
     method: 'POST',
@@ -107,28 +94,71 @@ async function fetchNeuralChunk(text: string, voice: NarrationVoiceId): Promise<
   return res.blob()
 }
 
-export async function speakArticle(
-  text: string,
+function voiceLabel(id: NarrationVoiceId): string {
+  return NARRATION_VOICES.find((v) => v.id === id)?.label || id
+}
+
+function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length
+}
+
+/**
+ * Speaks sentence texts one-by-one (fetch → play → prefetch next).
+ * `sentenceIndexes[i]` maps queue item i → absolute article sentence index.
+ */
+export async function speakSentences(
+  texts: string[],
   opts: {
-    title?: string
+    sentenceIndexes: number[]
+    firstWordOffset?: number
     voice?: NarrationVoiceId
     onStatus?: (status: SpeechStatus, detail?: string) => void
-  } = {},
+    onProgress?: (progress: SpeakProgress) => void
+  },
 ): Promise<SpeakHandle> {
-  const { title, voice = 'isabella', onStatus } = opts
-  const payload = [title, text].filter(Boolean).join('. ').replace(/\s+/g, ' ').trim()
-  const parts = chunkText(payload)
-  if (!parts.length) {
+  const {
+    sentenceIndexes,
+    firstWordOffset = 0,
+    voice = 'isabella',
+    onStatus,
+    onProgress,
+  } = opts
+
+  const queue = texts
+    .map((text, i) => ({
+      text: text.replace(/\s+/g, ' ').trim(),
+      sentenceIndex: sentenceIndexes[i] ?? i,
+    }))
+    .filter((item) => item.text)
+
+  if (!queue.length) {
     onStatus?.('error', 'Testo vuoto.')
-    return { stop() {}, pause() {}, resume() {} }
+    return { stop() {}, pause() {}, resume() {}, getProgress: () => null }
   }
 
   let aborted = false
+  let pausedGate: Promise<void> | null = null
+  let resumeGate: (() => void) | null = null
   const audioEl = ensureAudioElement()
   const objectUrls: string[] = []
   let playIndex = 0
-  let chunkQueue: Blob[] = []
-  let waitingGesture = false
+  let currentWord = firstWordOffset
+  let finished = false
+
+  const progressNow = (): SpeakProgress | null => {
+    if (finished || !queue.length || playIndex >= queue.length) return null
+    return {
+      sentenceIndex: queue[playIndex].sentenceIndex,
+      wordIndex: currentWord,
+      queueIndex: playIndex,
+      queueLength: queue.length,
+    }
+  }
+
+  const emitProgress = () => {
+    const p = progressNow()
+    if (p) onProgress?.(p)
+  }
 
   const revokeUrls = () => {
     for (const url of objectUrls) {
@@ -145,6 +175,7 @@ export async function speakArticle(
     try {
       audioEl.onended = null
       audioEl.onerror = null
+      audioEl.ontimeupdate = null
       audioEl.pause()
       audioEl.removeAttribute('src')
       audioEl.load()
@@ -154,91 +185,172 @@ export async function speakArticle(
   }
 
   const cleanup = () => {
-    waitingGesture = false
+    if (resumeGate) {
+      resumeGate()
+      resumeGate = null
+      pausedGate = null
+    }
     detach()
     revokeUrls()
-    chunkQueue = []
     playIndex = 0
+    currentWord = 0
   }
 
-  const playNext = () => {
-    if (aborted) return
-    if (playIndex >= chunkQueue.length) {
-      cleanup()
-      onStatus?.('idle')
-      return
+  const waitIfPaused = async () => {
+    while (pausedGate && !aborted) {
+      await pausedGate
     }
-    const url = URL.createObjectURL(chunkQueue[playIndex])
-    objectUrls.push(url)
-    audioEl.onended = () => {
-      playIndex += 1
-      playNext()
-    }
-    audioEl.onerror = () => {
-      playIndex += 1
-      playNext()
-    }
-    audioEl.muted = false
-    audioEl.src = url
-    void audioEl.play().then(
-      () => {
-        waitingGesture = false
-        onStatus?.('speaking', voiceLabel(voice))
-      },
-      () => {
-        // Keep audio ready; next tap on the button calls resume().
-        waitingGesture = true
-        onStatus?.('paused', 'Tocca di nuovo per ascoltare')
-      },
-    )
   }
+
+  const playBlob = (blob: Blob, wordsInClip: number, wordBase: number) =>
+    new Promise<void>((resolve) => {
+      if (aborted) {
+        resolve()
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      objectUrls.push(url)
+      currentWord = wordBase
+      emitProgress()
+
+      let settled = false
+      const done = () => {
+        if (settled) return
+        settled = true
+        window.clearInterval(abortWatch)
+        audioEl.onended = null
+        audioEl.onerror = null
+        audioEl.ontimeupdate = null
+        resolve()
+      }
+
+      const abortWatch = window.setInterval(() => {
+        if (aborted) done()
+      }, 120)
+
+      audioEl.ontimeupdate = () => {
+        if (!audioEl.duration || !Number.isFinite(audioEl.duration)) return
+        const ratio = Math.min(1, Math.max(0, audioEl.currentTime / audioEl.duration))
+        const local = Math.min(wordsInClip - 1, Math.floor(ratio * wordsInClip))
+        currentWord = wordBase + local
+        emitProgress()
+      }
+      audioEl.onended = () => done()
+      audioEl.onerror = () => done()
+      audioEl.muted = false
+      audioEl.src = url
+
+      void audioEl.play().then(
+        () => {
+          onStatus?.('speaking', voiceLabel(voice))
+          emitProgress()
+        },
+        () => {
+          onStatus?.('paused', 'Tocca di nuovo per ascoltare')
+          emitProgress()
+        },
+      )
+    })
 
   onStatus?.('loading', voiceLabel(voice))
-  try {
-    const blobs: Blob[] = []
-    for (const part of parts) {
-      if (aborted) return { stop() {}, pause() {}, resume() {} }
-      blobs.push(await fetchNeuralChunk(part, voice))
+
+  const run = async () => {
+    try {
+      let prefetch: Promise<Blob> | null = fetchNeuralChunk(queue[0].text, voice)
+
+      for (let i = 0; i < queue.length; i += 1) {
+        if (aborted) return
+        playIndex = i
+        currentWord = i === 0 ? firstWordOffset : 0
+        emitProgress()
+
+        const blob = await (prefetch ?? fetchNeuralChunk(queue[i].text, voice))
+        prefetch = null
+        if (aborted) return
+
+        // Prefetch next while current plays.
+        if (i + 1 < queue.length) {
+          prefetch = fetchNeuralChunk(queue[i + 1].text, voice)
+        }
+
+        await waitIfPaused()
+        if (aborted) return
+
+        const wordsInClip = countWords(queue[i].text) || 1
+        const wordBase = i === 0 ? firstWordOffset : 0
+        await playBlob(blob, wordsInClip, wordBase)
+        await waitIfPaused()
+        if (aborted) return
+      }
+
+      if (!aborted) {
+        finished = true
+        cleanup()
+        onStatus?.('idle')
+      }
+    } catch (err) {
+      if (aborted) return
+      cleanup()
+      onStatus?.(
+        'error',
+        err instanceof Error ? err.message : 'Voce neurale non disponibile.',
+      )
     }
-    if (aborted) return { stop() {}, pause() {}, resume() {} }
-    chunkQueue = blobs
-    playIndex = 0
-    playNext()
-  } catch (err) {
-    cleanup()
-    onStatus?.(
-      'error',
-      err instanceof Error ? err.message : 'Voce neurale non disponibile.',
-    )
   }
+
+  void run()
 
   return {
     stop() {
       aborted = true
+      finished = true
       cleanup()
       onStatus?.('idle')
     },
     pause() {
-      if (audioEl && !audioEl.paused) {
+      if (!audioEl.paused) {
         audioEl.pause()
-        onStatus?.('paused', voiceLabel(voice))
       }
+      if (!pausedGate) {
+        pausedGate = new Promise<void>((resolve) => {
+          resumeGate = resolve
+        })
+      }
+      onStatus?.('paused', voiceLabel(voice))
+      emitProgress()
     },
     resume() {
       if (aborted) return
-      if (waitingGesture || audioEl.paused) {
-        void audioEl.play().then(
-          () => {
-            waitingGesture = false
-            onStatus?.('speaking', voiceLabel(voice))
-          },
-          () => onStatus?.('paused', 'Tocca di nuovo per ascoltare'),
-        )
+      if (resumeGate) {
+        resumeGate()
+        resumeGate = null
+        pausedGate = null
       }
+      void audioEl.play().then(
+        () => {
+          onStatus?.('speaking', voiceLabel(voice))
+          emitProgress()
+        },
+        () => onStatus?.('paused', 'Tocca di nuovo per ascoltare'),
+      )
     },
+    getProgress: () => progressNow(),
   }
 }
 
-function voiceLabel(id: NarrationVoiceId): string {
-  return NARRATION_VOICES.find((v) => v.id === id)?.label || id
+/** @deprecated Prefer speakSentences — kept for simple whole-text calls. */
+export async function speakArticle(
+  text: string,
+  opts: {
+    title?: string
+    voice?: NarrationVoiceId
+    onStatus?: (status: SpeechStatus, detail?: string) => void
+  } = {},
+): Promise<SpeakHandle> {
+  const payload = [opts.title, text].filter(Boolean).join('. ').replace(/\s+/g, ' ').trim()
+  return speakSentences([payload], {
+    sentenceIndexes: [0],
+    voice: opts.voice,
+    onStatus: opts.onStatus,
+  })
 }

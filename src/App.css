@@ -802,6 +802,145 @@ code {
   opacity: 0.9;
 }
 
+.article-narration {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.article-narration-head {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.article-narration-head h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  line-height: 1.25;
+}
+
+.narration-resume-banner {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.narration-resume-banner p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.narration-resume-banner em {
+  font-style: normal;
+  font-weight: 600;
+}
+
+.narration-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.narration-hint {
+  margin: 0;
+}
+
+.narration-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.narration-status {
+  margin: 0;
+  padding: 0.65rem 0.85rem;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  font-size: 0.95rem;
+}
+
+.article-body {
+  display: grid;
+  gap: 0.65rem;
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  padding: 0.25rem 0.15rem 1rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.article-sentence {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.45rem 0.5rem;
+  border-radius: 0;
+  line-height: 1.55;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.article-sentence.in-range {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.article-sentence.is-current {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.article-sentence.is-paused {
+  background: color-mix(in srgb, #c4a574 22%, transparent);
+  box-shadow: inset 3px 0 0 #c4a574;
+}
+
+.sentence-pick {
+  align-self: start;
+  min-width: 1.75rem;
+  margin: 0;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.sentence-words {
+  display: inline;
+}
+
+.article-word {
+  display: inline;
+  margin: 0;
+  padding: 0.05rem 0.12rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+.article-word.in-range {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.article-word.is-current {
+  background: var(--accent);
+  color: #102226;
+  font-weight: 600;
+}
+
+.article-word.is-paused {
+  background: #c4a574;
+  color: #1a1510;
+}
+
 .library-list {
   list-style: none;
   padding: 0;
