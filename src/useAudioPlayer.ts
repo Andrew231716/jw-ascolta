@@ -444,6 +444,41 @@ export function useAudioPlayer() {
     },
     resumeFromGesture,
     pause: () => audioRef.current?.pause(),
+    /** Stop playback and empty the queue (music, articles, or video audio). */
+    stopAndClear() {
+      if (autoSkipTimer.current) window.clearTimeout(autoSkipTimer.current)
+      const audio = audioRef.current
+      if (audio) {
+        try {
+          audio.pause()
+          audio.removeAttribute('src')
+          audio.load()
+        } catch {
+          /* ignore */
+        }
+      }
+      playlistRef.current = []
+      indexRef.current = 0
+      needsGestureRef.current = false
+      setState({
+        playlist: [],
+        index: 0,
+        playing: false,
+        loading: false,
+        error: null,
+        currentTime: 0,
+        duration: 0,
+        needsGesture: false,
+      })
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.metadata = null
+          navigator.mediaSession.playbackState = 'none'
+        } catch {
+          /* ignore */
+        }
+      }
+    },
   }
 }
 

@@ -147,7 +147,7 @@ export default function App() {
   const siriFocus = initial.siriFocus
   const player = useAudioPlayer()
   const autoplayStarted = useRef(false)
-  const [saved] = useState(() => readSession())
+  const [saved, setSaved] = useState(() => readSession())
   const [favorites, setFavorites] = useState(() =>
     readSaved<Track[]>('favorites', []).filter(isTrack),
   )
@@ -261,6 +261,25 @@ export default function App() {
   function playTracks(tracks: Track[], start = 0, position = 0) {
     setStatus(null)
     void player.setPlaylist(tracks, true, start, position)
+  }
+
+  function closePlayback() {
+    player.stopAndClear()
+    lastSession.current = null
+    setSaved(null)
+    try {
+      localStorage.removeItem('jw-ascolta:session')
+    } catch {
+      /* ignore */
+    }
+    setTimer(null)
+    setStatus('Riproduzione chiusa · coda vuota')
+    setQueueExpanded(false)
+  }
+
+  function clearLaterQueue() {
+    setLater([])
+    setStatus('Lista «Ascolta dopo» svuotata')
   }
 
 
@@ -541,10 +560,19 @@ export default function App() {
                   ›
                 </button>
               </div>
-              <button className="btn ghost small" onClick={() => toggleFavorite(player.current!)}
-                aria-pressed={favorites.some((track) => track.id === player.current?.id)}>
-                {favorites.some((track) => track.id === player.current?.id) ? '★ Nei preferiti' : '☆ Aggiungi ai preferiti'}
-              </button>
+              <div className="result-actions">
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  onClick={closePlayback}
+                >
+                  Chiudi riproduzione
+                </button>
+                <button className="btn ghost small" onClick={() => toggleFavorite(player.current!)}
+                  aria-pressed={favorites.some((track) => track.id === player.current?.id)}>
+                  {favorites.some((track) => track.id === player.current?.id) ? '★ Nei preferiti' : '☆ Aggiungi ai preferiti'}
+                </button>
+              </div>
               {player.error && <p className="error" role="alert">{player.error}</p>}
               {player.needsGesture && (
                 <p className="gesture-inline">
@@ -728,6 +756,11 @@ export default function App() {
             Trascina i brani o usa ↑ ↓ per cambiare ordine. La riproduzione
             continua da sola dopo il brano corrente.
           </p>
+          <div className="queue-actions">
+            <button type="button" className="btn ghost small" onClick={closePlayback}>
+              Svuota coda e chiudi
+            </button>
+          </div>
           <ul>
             {player.playlist.slice(0, visibleCount).map((t, i) => (
               <li
@@ -798,9 +831,24 @@ export default function App() {
       {!siriFocus && (
         <section className="chooser" id="libreria" aria-label="Libreria personale">
           <h2>Ascolta dopo</h2>
-          {later.length ? <TrackList tracks={later} onPlay={(index) => playTracks(later, index)}
-            onRemove={(track) => setLater((list) => list.filter((item) => item.id !== track.id))} />
-            : <p>Salva un articolo o un video dal catalogo per ritrovarlo qui.</p>}
+          {later.length ? (
+            <>
+              <div className="queue-actions">
+                <button type="button" className="btn ghost small" onClick={clearLaterQueue}>
+                  Svuota «Ascolta dopo»
+                </button>
+              </div>
+              <TrackList
+                tracks={later}
+                onPlay={(index) => playTracks(later, index)}
+                onRemove={(track) =>
+                  setLater((list) => list.filter((item) => item.id !== track.id))
+                }
+              />
+            </>
+          ) : (
+            <p>Salva un articolo o un video dal catalogo per ritrovarlo qui.</p>
+          )}
           <h2>Preferiti e raccolte</h2>
           {favorites.length ? (
             <>
@@ -857,6 +905,13 @@ export default function App() {
           <button className="icon-btn" aria-label={player.playing ? 'Pausa' : 'Riproduci'}
             onClick={() => void player.toggle()}>{player.playing ? '❚❚' : '▶'}</button>
           <button className="icon-btn" aria-label="Successivo" onClick={player.playNext}>›</button>
+          <button
+            className="icon-btn"
+            aria-label="Chiudi riproduzione"
+            onClick={closePlayback}
+          >
+            ✕
+          </button>
         </aside>
       )}
 

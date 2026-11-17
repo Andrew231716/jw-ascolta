@@ -1229,6 +1229,13 @@ code {
   display: none;
 }
 
+.queue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
 .resume-card.btn {
   display: grid;
   grid-template-columns: 1fr;
