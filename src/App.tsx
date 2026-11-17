@@ -19,8 +19,9 @@ import './App.css'
 
 type View = 'home' | 'siri'
 
-type Session = { tracks: Track[]; index: number; position: number }
+type Session = { tracks: Track[]; index: number; position: number; updatedAt?: number }
 type Collection = { id: string; name: string; tracks: Track[] }
+type ResumeReader = { id: string; title: string; source: string }
 
 function isTrack(value: unknown): value is Track {
   if (!value || typeof value !== 'object') return false
@@ -46,6 +47,7 @@ function readSession(): Session | null {
     tracks: raw.tracks,
     index: raw.index,
     position: Number(raw.position) || 0,
+    updatedAt: Number(raw.updatedAt) || 0,
   }
 }
 
@@ -162,6 +164,9 @@ export default function App() {
   const [showMini, setShowMini] = useState(false)
   const lastSession = useRef<Session | null>(null)
   const [articleBookmarks, setArticleBookmarks] = useState(() => listBookmarks())
+  const [resumeReader, setResumeReader] = useState<ResumeReader | null>(
+    initial.initialReader,
+  )
   const { playlist, index, currentTime, pause } = player
 
   useEffect(() => {
@@ -169,17 +174,27 @@ export default function App() {
   }, [stopAtEnd])
 
   useEffect(() => {
-    if (!libraryOpen) setArticleBookmarks(listBookmarks())
+    setArticleBookmarks(listBookmarks())
   }, [libraryOpen])
 
   useEffect(() => {
     if (!playlist[index]) return
-    lastSession.current = { tracks: playlist, index, position: currentTime }
+    lastSession.current = {
+      tracks: playlist,
+      index,
+      position: currentTime,
+      updatedAt: Date.now(),
+    }
   }, [playlist, index, currentTime])
 
   useEffect(() => {
     const persist = () => {
-      if (lastSession.current) saveLocal('session', lastSession.current)
+      if (lastSession.current) {
+        saveLocal('session', {
+          ...lastSession.current,
+          updatedAt: Date.now(),
+        })
+      }
     }
     const interval = window.setInterval(persist, 5000)
     window.addEventListener('pagehide', persist)
@@ -393,29 +408,64 @@ export default function App() {
             <h1 className="brand">JW Ascolta</h1>
           </div>
           <p className="lede">Musica, articoli audio e video da JW.org.</p>
-          {!player.current && saved?.tracks[saved.index] && (
-            <button className="btn primary resume-card" disabled={catalogLoading}
-              onClick={() => playTracks(saved.tracks, saved.index, saved.position)}>
-              <span>▶ Riprendi ascolto</span>
-              <span>{formatDuration(saved.position)}</span>
-              <span className="resume-title">{saved.tracks[saved.index].title}</span>
-            </button>
-          )}
-          {!libraryOpen && articleBookmarks[0] && (
-            <button
-              className="btn ghost resume-card"
-              onClick={() => setLibraryOpen(true)}
-            >
-              <span>▶ Riprendi articolo</span>
-              <span className="resume-title">{articleBookmarks[0].title}</span>
-              <span className="q-meta">«{articleBookmarks[0].snippet}»</span>
-            </button>
-          )}
+          {(() => {
+            if (player.current) return null
+            const music = saved?.tracks[saved.index]
+              ? {
+                  kind: 'music' as const,
+                  updatedAt: saved.updatedAt || 0,
+                  title: saved.tracks[saved.index].title,
+                  meta: formatDuration(saved.position),
+                  run: () => playTracks(saved.tracks, saved.index, saved.position),
+                }
+              : null
+            const article = articleBookmarks[0]
+              ? {
+                  kind: 'article' as const,
+                  updatedAt: articleBookmarks[0].updatedAt || 0,
+                  title: articleBookmarks[0].title,
+                  meta: `Isabella · «${articleBookmarks[0].snippet}»`,
+                  run: () => {
+                    setResumeReader({
+                      id: articleBookmarks[0].articleId,
+                      title: articleBookmarks[0].title,
+                      source: articleBookmarks[0].source,
+                    })
+                    setLibraryOpen(true)
+                  },
+                }
+              : null
+            const target =
+              music && article
+                ? article.updatedAt >= music.updatedAt
+                  ? article
+                  : music
+                : music || article
+            if (!target) return null
+            return (
+              <button
+                className="btn primary resume-card"
+                disabled={target.kind === 'music' && catalogLoading}
+                onClick={target.run}
+              >
+                <span>▶ Riprendi ascolto</span>
+                <span>{target.meta}</span>
+                <span className="resume-title">{target.title}</span>
+              </button>
+            )
+          })()}
           <nav className="top-nav" aria-label="Libreria">
             <button type="button" className="nav-link" aria-pressed={!libraryOpen}
-              onClick={() => setLibraryOpen(false)}>Musica</button>
+              onClick={() => {
+                setLibraryOpen(false)
+                setResumeReader(null)
+                setArticleBookmarks(listBookmarks())
+              }}>Musica</button>
             <button type="button" className="nav-link" aria-pressed={libraryOpen}
-              onClick={() => setLibraryOpen(true)}>Articoli e video</button>
+              onClick={() => {
+                setArticleBookmarks(listBookmarks())
+                setLibraryOpen(true)
+              }}>Articoli e video</button>
             <button type="button" className="nav-link" onClick={openSiriGuide}>Siri e CarPlay</button>
             <a className="nav-link" href="#libreria">La mia libreria</a>
           </nav>
@@ -547,7 +597,11 @@ export default function App() {
       {!siriFocus && <div hidden={!libraryOpen}>
         <ListeningLibrary
           active={libraryOpen}
-          initialReader={initial.initialReader}
+          initialReader={resumeReader}
+          onReaderClose={() => {
+            setResumeReader(null)
+            setArticleBookmarks(listBookmarks())
+          }}
           onPlay={playTracks}
           onAppend={player.append}
           later={later}

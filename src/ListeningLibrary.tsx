@@ -52,6 +52,7 @@ export function ListeningLibrary({
   collections,
   onSave,
   initialReader = null,
+  onReaderClose,
 }: {
   active: boolean
   onPlay: (tracks: Track[], index?: number) => void
@@ -61,6 +62,7 @@ export function ListeningLibrary({
   collections: { id: string; name: string }[]
   onSave: (id: string, track: Track) => void
   initialReader?: ReaderTarget | null
+  onReaderClose?: () => void
 }) {
   const [kind, setKind] = useState<Kind>('articles')
   const [topics, setTopics] = useState<Topic[]>([])
@@ -175,6 +177,7 @@ export function ListeningLibrary({
           onClose={() => {
             setReader(null)
             setBookmarkTick((n) => n + 1)
+            onReaderClose?.()
             const url = new URL(window.location.href)
             ;['article', 'articleUrl', 'articleTitle', 'ns', 'ne'].forEach((k) =>
               url.searchParams.delete(k),
