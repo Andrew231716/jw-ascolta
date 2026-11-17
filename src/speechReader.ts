@@ -16,6 +16,54 @@ export type SpeakHandle = {
   resume: () => void
 }
 
+/** Silent WAV — unlocks Web Audio autoplay during a user gesture. */
+const SILENT_WAV =
+  'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA'
+
+let primedAudio: HTMLAudioElement | null = null
+
+function ensureAudioElement(): HTMLAudioElement {
+  if (primedAudio) return primedAudio
+  const el = new Audio()
+  el.preload = 'auto'
+  el.setAttribute('playsinline', 'true')
+  el.setAttribute('webkit-playsinline', 'true')
+  ;(el as HTMLAudioElement & { playsInline?: boolean }).playsInline = true
+  primedAudio = el
+  return el
+}
+
+/**
+ * Call synchronously inside the click handler (before any await)
+ * so Safari/Chrome keep the audio unlock across the TTS fetch.
+ */
+export function primeNarrationAudio(): void {
+  const el = ensureAudioElement()
+  try {
+    el.muted = true
+    el.src = SILENT_WAV
+    const play = el.play()
+    if (play && typeof play.then === 'function') {
+      void play
+        .then(() => {
+          el.pause()
+          el.muted = false
+          el.removeAttribute('src')
+          el.load()
+        })
+        .catch(() => {
+          el.muted = false
+        })
+    }
+  } catch {
+    try {
+      el.muted = false
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function chunkText(text: string, maxLen = 1800): string[] {
   const clean = text.replace(/\s+/g, ' ').trim()
   if (!clean) return []
@@ -76,24 +124,13 @@ export async function speakArticle(
   }
 
   let aborted = false
-  let audioEl: HTMLAudioElement | null = null
+  const audioEl = ensureAudioElement()
   const objectUrls: string[] = []
   let playIndex = 0
   let chunkQueue: Blob[] = []
+  let waitingGesture = false
 
-  const cleanup = () => {
-    if (audioEl) {
-      try {
-        audioEl.onended = null
-        audioEl.onerror = null
-        audioEl.pause()
-        audioEl.removeAttribute('src')
-        audioEl.load()
-      } catch {
-        /* ignore */
-      }
-    }
-    audioEl = null
+  const revokeUrls = () => {
     for (const url of objectUrls) {
       try {
         URL.revokeObjectURL(url)
@@ -102,6 +139,24 @@ export async function speakArticle(
       }
     }
     objectUrls.length = 0
+  }
+
+  const detach = () => {
+    try {
+      audioEl.onended = null
+      audioEl.onerror = null
+      audioEl.pause()
+      audioEl.removeAttribute('src')
+      audioEl.load()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const cleanup = () => {
+    waitingGesture = false
+    detach()
+    revokeUrls()
     chunkQueue = []
     playIndex = 0
   }
@@ -115,21 +170,25 @@ export async function speakArticle(
     }
     const url = URL.createObjectURL(chunkQueue[playIndex])
     objectUrls.push(url)
-    const el = new Audio(url)
-    audioEl = el
-    el.onended = () => {
+    audioEl.onended = () => {
       playIndex += 1
       playNext()
     }
-    el.onerror = () => {
+    audioEl.onerror = () => {
       playIndex += 1
       playNext()
     }
-    void el.play().then(
-      () => onStatus?.('speaking', voiceLabel(voice)),
+    audioEl.muted = false
+    audioEl.src = url
+    void audioEl.play().then(
       () => {
-        cleanup()
-        onStatus?.('error', 'Riproduzione bloccata dal browser.')
+        waitingGesture = false
+        onStatus?.('speaking', voiceLabel(voice))
+      },
+      () => {
+        // Keep audio ready; next tap on the button calls resume().
+        waitingGesture = true
+        onStatus?.('paused', 'Tocca di nuovo per ascoltare')
       },
     )
   }
@@ -166,8 +225,15 @@ export async function speakArticle(
       }
     },
     resume() {
-      if (audioEl && audioEl.paused) {
-        void audioEl.play().then(() => onStatus?.('speaking', voiceLabel(voice)))
+      if (aborted) return
+      if (waitingGesture || audioEl.paused) {
+        void audioEl.play().then(
+          () => {
+            waitingGesture = false
+            onStatus?.('speaking', voiceLabel(voice))
+          },
+          () => onStatus?.('paused', 'Tocca di nuovo per ascoltare'),
+        )
       }
     },
   }

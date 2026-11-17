@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatDuration, normalizeTitle, type Track } from './catalog'
-import { speakArticle, type SpeakHandle, type SpeechStatus } from './speechReader'
+import {
+  primeNarrationAudio,
+  speakArticle,
+  type SpeakHandle,
+  type SpeechStatus,
+} from './speechReader'
 
 type Kind = 'articles' | 'videos'
 type Topic = { id: string; name: string }
@@ -100,9 +105,12 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
       return
     }
     if (ttsId === item.id && ttsStatus === 'paused') {
+      // Second tap after autoplay block — still inside a user gesture.
       speechRef.current?.resume()
       return
     }
+    // Unlock audio during this click, before any await (Safari/Chrome).
+    primeNarrationAudio()
     speechRef.current?.stop()
     setTtsId(item.id)
     setTtsStatus('loading')
@@ -121,9 +129,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
         onStatus(status, detail) {
           setTtsStatus(status)
           if (detail) setTtsDetail(detail)
-          if (status === 'idle' || status === 'error') {
-            if (status === 'idle') setTtsId(null)
-          }
+          if (status === 'idle') setTtsId(null)
         },
       })
     } catch (err) {
@@ -304,7 +310,9 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
                   : activeItem && ttsStatus === 'speaking'
                     ? 'Pausa'
                     : activeItem && ttsStatus === 'paused'
-                      ? 'Riprendi'
+                      ? ttsDetail.includes('Tocca')
+                        ? 'Tocca per ascoltare'
+                        : 'Riprendi'
                       : 'Ascolta con Isabella'
               return (
                 <li className="listening-result pending" key={item.id}>
