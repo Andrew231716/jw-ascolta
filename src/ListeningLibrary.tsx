@@ -4,7 +4,13 @@ import { formatDuration, normalizeTitle, type Track } from './catalog'
 type Kind = 'articles' | 'videos'
 type Topic = { id: string; name: string }
 type Entry = Track & { source: string; topics: string[]; description?: string }
-type Page = { tracks: Entry[]; next: number | null; failed?: number }
+type Pending = { id: string; title: string; source: string; reason: string }
+type Page = {
+  tracks: Entry[]
+  pending?: Pending[]
+  next: number | null
+  failed?: number
+}
 
 const themes = [
   ['Famiglia e figli', /famigli|matrimoni|figli|genitor|coniug|educaz/],
@@ -46,6 +52,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   const [topics, setTopics] = useState<Topic[]>([])
   const [topic, setTopic] = useState('')
   const [tracks, setTracks] = useState<Entry[]>([])
+  const [pending, setPending] = useState<Pending[]>([])
   const [next, setNext] = useState<number | null>(null)
   const [offset, setOffset] = useState(0)
   const [retry, setRetry] = useState(0)
@@ -78,9 +85,20 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
           ...track, sectionSlug: 'tutto', sectionName: track.topics.at(-1) ?? sectionName,
         }))
         setTracks((previous) => [...new Map([...previous, ...entries].map((entry) => [entry.id, entry])).values()])
+        setPending((previous) => [...new Map([
+          ...previous,
+          ...(data.pending ?? []),
+        ].map((item) => [item.id, item])).values()])
         setNext(data.next)
         setError(data.failed ? 'Alcuni audio non sono stati verificati. Riprova per completare questa pagina.' : '')
-        if (!topic && submitted && data.next !== null && !data.failed) {
+        if (
+          !topic &&
+          submitted &&
+          data.next !== null &&
+          !data.failed &&
+          !(data.tracks?.length) &&
+          !(data.pending?.length)
+        ) {
           setOffset(data.next)
           return
         }
@@ -95,6 +113,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   function selectTopic(value: string) {
     setTopic(value)
     setTracks([])
+    setPending([])
     setOffset(0)
     setNext(null)
     setError('')
@@ -131,6 +150,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
         const title = normalizeTitle(query) ? query.trim() : ''
         if (!title && !topic) return
         setTracks([])
+        setPending([])
         setNext(null)
         setOffset(0)
         setError('')
@@ -140,7 +160,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
         setSubmitted(title)
         setRetry((value) => value + 1)
       }}>
-        <input type="search" aria-label="Cerca per titolo" placeholder="Cerca per titolo"
+        <input type="search" aria-label="Cerca per titolo" placeholder="es. Cybercrime, Torre di Guardia…"
           maxLength={120} value={query} onChange={(event) => setQuery(event.target.value)} />
         <button className="btn primary" disabled={!query.trim() && !topic}>Cerca</button>
       </form>
@@ -170,7 +190,9 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
         setError('')
         setRetry((value) => value + 1)
       }}>Riprova</button></p>}
-      {(topic || submitted) && next === null && !loading && !visible.length && !error && <p>Nessun contenuto trovato in questo gruppo.</p>}
+      {(topic || submitted) && next === null && !loading && !visible.length && !pending.length && !error && (
+        <p>Nessun contenuto trovato in questo gruppo.</p>
+      )}
       {visible.length > 0 && <button className="btn primary small" onClick={() => onPlay(visible)}>Ascolta i risultati</button>}
       <ul className="library-list">
         {visible.map((track, index) => <li className="listening-result" key={track.id}>
@@ -191,11 +213,36 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
           </div>
         </li>)}
       </ul>
+      {pending.length > 0 && (
+        <div className="pending-audio">
+          <h3>Trovati su JW.org, audio non ancora disponibile</h3>
+          <p className="section-lede">
+            L’articolo c’è sul sito, ma JW.org non ha ancora pubblicato il file
+            MP3. Appena esce l’audio, comparirà qui.
+          </p>
+          <ul className="library-list">
+            {pending.map((item) => (
+              <li className="listening-result pending" key={item.id}>
+                <div className="queue-item">
+                  <span className="q-title">{item.title}</span>
+                  <span className="q-meta">{item.reason}</span>
+                </div>
+                <a href={item.source} target="_blank" rel="noreferrer">Apri su JW.org ↗</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {next !== null && <button className="btn ghost" disabled={loading || Boolean(error)} onClick={() => {
         setLoading(true)
         setOffset(next)
-      }}>{submitted && !topic ? 'Continua la ricerca' : 'Carica altri articoli'}</button>}
-      {kind === 'videos' && <p className="section-lede">Il catalogo mostra i video con sottotitoli disponibili e quelli della categoria Audiodescrizioni.</p>}
+      }}>{submitted && !topic ? 'Continua la ricerca' : 'Carica altri'}</button>}
+      {kind === 'videos' && (
+        <p className="section-lede">
+          Mostra i video del catalogo JW.org (stream a bassa risoluzione, utili
+          da ascoltare).
+        </p>
+      )}
     </section>
   )
 }

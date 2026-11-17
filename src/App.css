@@ -787,6 +787,21 @@ code {
   margin-inline-start: .5rem;
 }
 
+.pending-audio {
+  margin-top: 1.25rem;
+}
+
+.pending-audio h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+}
+
+.listening-result.pending .queue-item {
+  cursor: default;
+  opacity: 0.9;
+}
+
 .library-list {
   list-style: none;
   padding: 0;
