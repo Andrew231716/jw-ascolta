@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { formatDuration, normalizeTitle, type Track } from './catalog'
+import { speakArticle, type SpeakHandle, type SpeechStatus } from './speechReader'
 
 type Kind = 'articles' | 'videos'
 type Topic = { id: string; name: string }
@@ -63,6 +64,23 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   const [submitted, setSubmitted] = useState('')
   const [theme, setTheme] = useState('')
   const [official, setOfficial] = useState('')
+  const [ttsId, setTtsId] = useState<string | null>(null)
+  const [ttsStatus, setTtsStatus] = useState<SpeechStatus>('idle')
+  const [ttsDetail, setTtsDetail] = useState('')
+  const speechRef = useRef<SpeakHandle | null>(null)
+
+  useEffect(() => {
+    if (!active) {
+      speechRef.current?.stop()
+      speechRef.current = null
+      setTtsId(null)
+      setTtsStatus('idle')
+    }
+  }, [active])
+
+  useEffect(() => () => {
+    speechRef.current?.stop()
+  }, [])
 
   useEffect(() => {
     if (!active) return
@@ -74,6 +92,51 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
       })
     return () => controller.abort()
   }, [active, kind, retry])
+
+  async function readWithVoice(item: Pending) {
+    if (ttsId === item.id && ttsStatus === 'speaking') {
+      speechRef.current?.pause()
+      return
+    }
+    if (ttsId === item.id && ttsStatus === 'paused') {
+      speechRef.current?.resume()
+      return
+    }
+    speechRef.current?.stop()
+    setTtsId(item.id)
+    setTtsStatus('loading')
+    setTtsDetail('')
+    try {
+      const path = new URL(item.source).pathname
+      const response = await fetch(
+        '/api/article-text?' + new URLSearchParams({ path }),
+      )
+      if (!response.ok) throw new Error('Impossibile leggere il testo dell’articolo.')
+      const data = (await response.json()) as { title?: string; text?: string }
+      if (!data.text?.trim()) throw new Error('Testo articolo non trovato.')
+      speechRef.current = await speakArticle(data.text, {
+        title: data.title || item.title,
+        onStatus(status, detail) {
+          setTtsStatus(status)
+          if (detail) setTtsDetail(detail)
+          if (status === 'idle' || status === 'error') {
+            if (status === 'idle') setTtsId(null)
+          }
+        },
+      })
+    } catch (err) {
+      setTtsStatus('error')
+      setTtsDetail(err instanceof Error ? err.message : 'Lettura non riuscita')
+    }
+  }
+
+  function stopVoice() {
+    speechRef.current?.stop()
+    speechRef.current = null
+    setTtsId(null)
+    setTtsStatus('idle')
+    setTtsDetail('')
+  }
 
   useEffect(() => {
     if (!topic && !submitted) return
@@ -215,21 +278,54 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
       </ul>
       {pending.length > 0 && (
         <div className="pending-audio">
-          <h3>Trovati su JW.org, audio non ancora disponibile</h3>
+          <h3>Senza audio JW.org · leggibili con voce neurale</h3>
           <p className="section-lede">
-            L’articolo c’è sul sito, ma JW.org non ha ancora pubblicato il file
-            MP3. Appena esce l’audio, comparirà qui.
+            L’articolo è sul sito ma non c’è ancora l’MP3 ufficiale. Puoi
+            ascoltarlo con la voce neurale del dispositivo (italiano).
           </p>
           <ul className="library-list">
-            {pending.map((item) => (
-              <li className="listening-result pending" key={item.id}>
-                <div className="queue-item">
-                  <span className="q-title">{item.title}</span>
-                  <span className="q-meta">{item.reason}</span>
-                </div>
-                <a href={item.source} target="_blank" rel="noreferrer">Apri su JW.org ↗</a>
-              </li>
-            ))}
+            {pending.map((item) => {
+              const activeItem = ttsId === item.id
+              const label =
+                activeItem && ttsStatus === 'loading'
+                  ? 'Preparazione…'
+                  : activeItem && ttsStatus === 'speaking'
+                    ? 'Pausa'
+                    : activeItem && ttsStatus === 'paused'
+                      ? 'Riprendi'
+                      : 'Ascolta con voce neurale'
+              return (
+                <li className="listening-result pending" key={item.id}>
+                  <div className="queue-item">
+                    <span className="q-title">{item.title}</span>
+                    <span className="q-meta">
+                      Nessun audio JW.org · {item.reason}
+                      {activeItem && ttsDetail ? ` · voce: ${ttsDetail}` : ''}
+                    </span>
+                  </div>
+                  <div className="result-actions">
+                    <button
+                      className="btn primary small"
+                      disabled={activeItem && ttsStatus === 'loading'}
+                      onClick={() => void readWithVoice(item)}
+                    >
+                      {label}
+                    </button>
+                    {activeItem && (ttsStatus === 'speaking' || ttsStatus === 'paused') && (
+                      <button className="btn ghost small" onClick={stopVoice}>
+                        Stop
+                      </button>
+                    )}
+                    <a href={item.source} target="_blank" rel="noreferrer">
+                      Apri su JW.org ↗
+                    </a>
+                  </div>
+                  {activeItem && ttsStatus === 'error' && (
+                    <p className="error" role="alert">{ttsDetail}</p>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         </div>
       )}
