@@ -1231,23 +1231,44 @@ code {
 
 .resume-card.btn {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: .2rem .75rem;
-  align-items: baseline;
+  grid-template-columns: 1fr;
+  gap: 0.2rem;
+  align-items: start;
   width: 100%;
-  margin-block: .75rem 1rem;
-  padding: .7rem .9rem;
-  border-radius: .9rem;
+  margin-block: 0.75rem 1rem;
+  padding: 0.85rem 1rem;
+  border-radius: 0.9rem;
   text-align: left;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.resume-label {
+  display: block;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #1a1208;
+}
+
+.resume-meta {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: rgba(26, 18, 8, 0.78);
+  word-break: break-word;
 }
 
 .resume-title {
-  grid-column: 1 / -1;
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: .88rem;
-  font-weight: 500;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #1a1208;
 }
 
 .listening-library input,

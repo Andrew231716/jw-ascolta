@@ -448,8 +448,8 @@ export default function App() {
                 disabled={target.kind === 'music' && catalogLoading}
                 onClick={target.run}
               >
-                <span>▶ Riprendi ascolto</span>
-                <span>{target.meta}</span>
+                <span className="resume-label">▶ Riprendi ascolto</span>
+                <span className="resume-meta">{target.meta}</span>
                 <span className="resume-title">{target.title}</span>
               </button>
             )
