@@ -1,71 +1,14 @@
+/** Voce narrativa neurale cloud (Isabella) — non quella del dispositivo. */
+
 export type SpeechStatus = 'idle' | 'loading' | 'speaking' | 'paused' | 'error'
+export type NarrationVoiceId = 'isabella' | 'elsa' | 'diego' | 'giuseppe'
 
-function chunkText(text: string, maxLen = 180): string[] {
-  const cleaned = text.replace(/\s+/g, ' ').trim()
-  if (!cleaned) return []
-  const sentences = cleaned.split(/(?<=[.!?…:;])\s+/)
-  const chunks: string[] = []
-  let current = ''
-  for (const sentence of sentences) {
-    if (!sentence) continue
-    if ((current + ' ' + sentence).trim().length <= maxLen) {
-      current = (current + ' ' + sentence).trim()
-    } else {
-      if (current) chunks.push(current)
-      if (sentence.length <= maxLen) current = sentence
-      else {
-        for (let i = 0; i < sentence.length; i += maxLen) {
-          chunks.push(sentence.slice(i, i + maxLen))
-        }
-        current = ''
-      }
-    }
-  }
-  if (current) chunks.push(current)
-  return chunks
-}
-
-function pickItalianVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
-  const it = voices.filter((v) => /^it([-_]|$)/i.test(v.lang) || /italian|italiano/i.test(v.name))
-  if (!it.length) return null
-  const preferred = [
-    /neural/i,
-    /enhanced/i,
-    /premium/i,
-    /natural/i,
-    /google/i,
-    /siri/i,
-    /alice/i,
-    /eddy/i,
-    /flo/i,
-    /reed/i,
-    /sandy/i,
-    /shelley/i,
-    /microsoft.*(elsa|diego|elsa)/i,
-  ]
-  for (const pattern of preferred) {
-    const hit = it.find((v) => pattern.test(v.name))
-    if (hit) return hit
-  }
-  return it.find((v) => v.localService) || it[0]
-}
-
-export function loadVoices(): Promise<SpeechSynthesisVoice[]> {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    return Promise.resolve([])
-  }
-  const existing = window.speechSynthesis.getVoices()
-  if (existing.length) return Promise.resolve(existing)
-  return new Promise((resolve) => {
-    const done = () => {
-      window.speechSynthesis.removeEventListener('voiceschanged', done)
-      resolve(window.speechSynthesis.getVoices())
-    }
-    window.speechSynthesis.addEventListener('voiceschanged', done)
-    // Safari sometimes never fires voiceschanged if already ready
-    window.setTimeout(() => resolve(window.speechSynthesis.getVoices()), 700)
-  })
-}
+export const NARRATION_VOICES: Array<{ id: NarrationVoiceId; label: string }> = [
+  { id: 'isabella', label: 'Isabella (narrativa)' },
+  { id: 'elsa', label: 'Elsa (chiara)' },
+  { id: 'diego', label: 'Diego (maschile)' },
+  { id: 'giuseppe', label: 'Giuseppe (multilingue)' },
+]
 
 export type SpeakHandle = {
   stop: () => void
@@ -73,72 +16,163 @@ export type SpeakHandle = {
   resume: () => void
 }
 
+function chunkText(text: string, maxLen = 1800): string[] {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (!clean) return []
+  if (clean.length <= maxLen) return [clean]
+  const parts: string[] = []
+  let rest = clean
+  while (rest.length > maxLen) {
+    const slice = rest.slice(0, maxLen)
+    const breakAt = Math.max(
+      slice.lastIndexOf('. '),
+      slice.lastIndexOf('! '),
+      slice.lastIndexOf('? '),
+      slice.lastIndexOf('; '),
+      slice.lastIndexOf(', '),
+      slice.lastIndexOf(' '),
+    )
+    const cut = breakAt > maxLen * 0.35 ? breakAt + 1 : maxLen
+    parts.push(rest.slice(0, cut).trim())
+    rest = rest.slice(cut).trim()
+  }
+  if (rest) parts.push(rest)
+  return parts
+}
+
+async function fetchNeuralChunk(text: string, voice: NarrationVoiceId): Promise<Blob> {
+  const res = await fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice }),
+  })
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const j = (await res.json()) as { error?: string }
+      detail = j.error || ''
+    } catch {
+      detail = await res.text()
+    }
+    throw new Error(detail || `TTS HTTP ${res.status}`)
+  }
+  return res.blob()
+}
+
 export async function speakArticle(
   text: string,
   opts: {
     title?: string
-    rate?: number
+    voice?: NarrationVoiceId
     onStatus?: (status: SpeechStatus, detail?: string) => void
   } = {},
 ): Promise<SpeakHandle> {
-  const { title, rate = 0.95, onStatus } = opts
-  if (!('speechSynthesis' in window)) {
-    onStatus?.('error', 'Questo dispositivo non supporta la lettura vocale.')
-    return { stop() {}, pause() {}, resume() {} }
-  }
-
-  window.speechSynthesis.cancel()
-  const voices = await loadVoices()
-  const voice = pickItalianVoice(voices)
-  const payload = [title, text].filter(Boolean).join('. ')
+  const { title, voice = 'isabella', onStatus } = opts
+  const payload = [title, text].filter(Boolean).join('. ').replace(/\s+/g, ' ').trim()
   const parts = chunkText(payload)
   if (!parts.length) {
     onStatus?.('error', 'Testo vuoto.')
     return { stop() {}, pause() {}, resume() {} }
   }
 
-  let index = 0
-  let stopped = false
+  let aborted = false
+  let audioEl: HTMLAudioElement | null = null
+  const objectUrls: string[] = []
+  let playIndex = 0
+  let chunkQueue: Blob[] = []
 
-  const speakNext = () => {
-    if (stopped) return
-    if (index >= parts.length) {
+  const cleanup = () => {
+    if (audioEl) {
+      try {
+        audioEl.onended = null
+        audioEl.onerror = null
+        audioEl.pause()
+        audioEl.removeAttribute('src')
+        audioEl.load()
+      } catch {
+        /* ignore */
+      }
+    }
+    audioEl = null
+    for (const url of objectUrls) {
+      try {
+        URL.revokeObjectURL(url)
+      } catch {
+        /* ignore */
+      }
+    }
+    objectUrls.length = 0
+    chunkQueue = []
+    playIndex = 0
+  }
+
+  const playNext = () => {
+    if (aborted) return
+    if (playIndex >= chunkQueue.length) {
+      cleanup()
       onStatus?.('idle')
       return
     }
-    const utter = new SpeechSynthesisUtterance(parts[index])
-    utter.lang = voice?.lang || 'it-IT'
-    if (voice) utter.voice = voice
-    utter.rate = rate
-    utter.pitch = 1
-    utter.onstart = () => onStatus?.('speaking', voice?.name)
-    utter.onend = () => {
-      index += 1
-      speakNext()
+    const url = URL.createObjectURL(chunkQueue[playIndex])
+    objectUrls.push(url)
+    const el = new Audio(url)
+    audioEl = el
+    el.onended = () => {
+      playIndex += 1
+      playNext()
     }
-    utter.onerror = () => {
-      if (stopped) return
-      onStatus?.('error', 'Lettura interrotta.')
+    el.onerror = () => {
+      playIndex += 1
+      playNext()
     }
-    window.speechSynthesis.speak(utter)
+    void el.play().then(
+      () => onStatus?.('speaking', voiceLabel(voice)),
+      () => {
+        cleanup()
+        onStatus?.('error', 'Riproduzione bloccata dal browser.')
+      },
+    )
   }
 
-  onStatus?.('speaking', voice?.name || 'it-IT')
-  speakNext()
+  onStatus?.('loading', voiceLabel(voice))
+  try {
+    const blobs: Blob[] = []
+    for (const part of parts) {
+      if (aborted) return { stop() {}, pause() {}, resume() {} }
+      blobs.push(await fetchNeuralChunk(part, voice))
+    }
+    if (aborted) return { stop() {}, pause() {}, resume() {} }
+    chunkQueue = blobs
+    playIndex = 0
+    playNext()
+  } catch (err) {
+    cleanup()
+    onStatus?.(
+      'error',
+      err instanceof Error ? err.message : 'Voce neurale non disponibile.',
+    )
+  }
 
   return {
     stop() {
-      stopped = true
-      window.speechSynthesis.cancel()
+      aborted = true
+      cleanup()
       onStatus?.('idle')
     },
     pause() {
-      window.speechSynthesis.pause()
-      onStatus?.('paused')
+      if (audioEl && !audioEl.paused) {
+        audioEl.pause()
+        onStatus?.('paused', voiceLabel(voice))
+      }
     },
     resume() {
-      window.speechSynthesis.resume()
-      onStatus?.('speaking', voice?.name)
+      if (audioEl && audioEl.paused) {
+        void audioEl.play().then(() => onStatus?.('speaking', voiceLabel(voice)))
+      }
     },
   }
+}
+
+function voiceLabel(id: NarrationVoiceId): string {
+  return NARRATION_VOICES.find((v) => v.id === id)?.label || id
 }

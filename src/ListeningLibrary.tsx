@@ -116,6 +116,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
       if (!data.text?.trim()) throw new Error('Testo articolo non trovato.')
       speechRef.current = await speakArticle(data.text, {
         title: data.title || item.title,
+        voice: 'isabella',
         onStatus(status, detail) {
           setTtsStatus(status)
           if (detail) setTtsDetail(detail)
@@ -278,10 +279,11 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
       </ul>
       {pending.length > 0 && (
         <div className="pending-audio">
-          <h3>Senza audio JW.org · leggibili con voce neurale</h3>
+          <h3>Senza audio JW.org · voce narrativa Isabella</h3>
           <p className="section-lede">
             L’articolo è sul sito ma non c’è ancora l’MP3 ufficiale. Puoi
-            ascoltarlo con la voce neurale del dispositivo (italiano).
+            ascoltarlo con la voce neurale cloud Isabella (narrativa, non del
+            dispositivo).
           </p>
           <ul className="library-list">
             {pending.map((item) => {
@@ -293,7 +295,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
                     ? 'Pausa'
                     : activeItem && ttsStatus === 'paused'
                       ? 'Riprendi'
-                      : 'Ascolta con voce neurale'
+                      : 'Ascolta con Isabella'
               return (
                 <li className="listening-result pending" key={item.id}>
                   <div className="queue-item">
