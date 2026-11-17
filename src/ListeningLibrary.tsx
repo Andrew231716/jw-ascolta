@@ -85,13 +85,14 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
+    setLoadingTopics(true)
     api<{ topics: Topic[] }>(kind, controller.signal)
       .then((data) => { setTopics(data.topics); setLoadingTopics(false) })
       .catch((err) => {
         if (!controller.signal.aborted) { setError(err.message); setLoadingTopics(false) }
       })
     return () => controller.abort()
-  }, [active, kind, retry])
+  }, [active, kind])
 
   async function readWithVoice(item: Pending) {
     if (ttsId === item.id && ttsStatus === 'speaking') {
@@ -142,9 +143,10 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
   useEffect(() => {
     if (!topic && !submitted) return
     const controller = new AbortController()
+    const sectionName = topics.find((item) => item.id === topic)?.name ?? ''
     api<Page>(kind, controller.signal, topic, offset, submitted)
       .then((data) => {
-        const sectionName = topics.find((item) => item.id === topic)?.name ?? ''
+        if (controller.signal.aborted) return
         const entries = data.tracks.map((track): Entry => ({
           ...track, sectionSlug: 'tutto', sectionName: track.topics.at(-1) ?? sectionName,
         }))
@@ -163,6 +165,7 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
           !(data.tracks?.length) &&
           !(data.pending?.length)
         ) {
+          // Keep loading; advance to the next category group.
           setOffset(data.next)
           return
         }
@@ -172,7 +175,8 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
         if (!controller.signal.aborted) { setError(err.message); setLoading(false) }
       })
     return () => controller.abort()
-  }, [kind, topic, topics, offset, retry, submitted])
+    // Intentionally omit `topics`: reloading the topic list must not abort an in-flight title search.
+  }, [kind, topic, offset, retry, submitted])
 
   function selectTopic(value: string) {
     setTopic(value)
@@ -248,7 +252,13 @@ export function ListeningLibrary({ active, onPlay, onAppend, later, onLater, col
           </select>
         </label>
       </>}
-      {(loading || loadingTopics) && <p role="status">Caricamento da JW.org…</p>}
+      {(loading || loadingTopics) && (
+        <p role="status">
+          {loading && submitted && !topic && offset > 0
+            ? 'Cerco ancora in altre categorie JW.org…'
+            : 'Caricamento da JW.org…'}
+        </p>
+      )}
       {error && <p role="alert">{error} <button className="btn ghost small" onClick={() => {
         setLoading(Boolean(topic || submitted))
         setError('')

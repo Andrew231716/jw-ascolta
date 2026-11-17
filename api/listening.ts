@@ -76,13 +76,18 @@ async function articleTopics() {
     }
   }
   const fromSite = Array.from(topics, ([id, name]) => ({ id, name }))
-  // Audio-ready pubs first so title search finds playable items quickly.
+  const preferHtml = '/it/biblioteca-digitale/articoli/altri-argomenti/'
+  const preferred = fromSite.filter((item) => item.id === preferHtml)
+  const rest = fromSite.filter((item) => item.id !== preferHtml)
+  // Pubs with MP3 first, then HTML "Altri argomenti" (pending/TTS titles like Cybercrime),
+  // then the remaining site sections.
   return [
     { id: 'pub:mrt', name: 'Altri argomenti (audio disponibili)' },
     { id: 'pub:w', name: 'Torre di Guardia — studio (audio)' },
     { id: 'pub:g', name: 'Svegliatevi! (audio)' },
     { id: 'pub:wp', name: 'Torre di Guardia — pubblica (audio)' },
-    ...fromSite,
+    ...preferred,
+    ...rest,
   ]
 }
 
@@ -387,9 +392,11 @@ export default async function handler(request: Request) {
               id: key,
               name,
             })) ?? [])
-      const group = Math.floor(offset / 1024) * 4
+      // Larger batches so title search reaches HTML catalogs (e.g. Cybercrime) in one hop.
+      const batchSize = kind === 'articles' ? 8 : 4
+      const group = Math.floor(offset / 1024) * batchSize
       const page = offset % 1024
-      const batch = topics.slice(group, group + 4)
+      const batch = topics.slice(group, group + batchSize)
       const results = await Promise.allSettled(
         batch.map(async ({ id, name }) => {
           if (kind === 'articles') {
@@ -438,7 +445,7 @@ export default async function handler(request: Request) {
             available.some((result) => result.more) && page < 1023
               ? offset + 1
               : group + batch.length < topics.length
-                ? (group / 4 + 1) * 1024
+                ? (Math.floor(group / batchSize) + 1) * 1024
                 : null,
         },
         failed ? {} : { headers },
