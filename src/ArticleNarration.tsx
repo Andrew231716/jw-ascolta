@@ -501,11 +501,26 @@ export function ArticleNarration({
           </div>
 
           <p className="section-lede narration-hint">
-            Tocca una <strong>frase</strong> o una <strong>parola</strong> per segnare{' '}
-            {selectMode === 'start' ? 'dove far partire' : 'dove far terminare'} l’audio.
+            Modalità <strong>{selectMode === 'start' ? 'Inizio' : 'Fine'}</strong>:
+            tocca una frase o una parola. Ora:{' '}
             {endSentence === null
-              ? ` Inizio: frase ${startSentence + 1}. Fine: fino in fondo.`
-              : ` Brano: frasi ${startSentence + 1}–${endSentence + 1}.`}
+              ? `da frase ${startSentence + 1} fino in fondo`
+              : `frasi ${startSentence + 1}–${endSentence + 1}`}
+            .
+          </p>
+          <p className="narration-range-legend" aria-hidden="true">
+            <span>
+              <span className="range-swatch start" />
+              Inizio
+            </span>
+            <span>
+              <span className="range-swatch end" />
+              Fine / brano
+            </span>
+            <span>
+              <span className="range-swatch play" />
+              In lettura
+            </span>
           </p>
 
           <div className="narration-controls">
@@ -563,12 +578,17 @@ export function ArticleNarration({
               const isCurrent = currentSentence === sentence.index
               const isPaused = Boolean(pausedHere && isCurrent)
               const selected = inRange(sentence.index)
+              const isStart = sentence.index === startSentence
               return (
                 <p
                   key={sentence.index}
                   className={[
                     'article-sentence',
                     selected ? 'in-range' : '',
+                    isStart ? 'is-range-start' : '',
+                    endSentence !== null && sentence.index === endSentence
+                      ? 'is-range-end'
+                      : '',
                     isCurrent ? 'is-current' : '',
                     isPaused ? 'is-paused' : '',
                   ]
@@ -585,15 +605,26 @@ export function ArticleNarration({
                     type="button"
                     className="sentence-pick"
                     onClick={() => pickSentence(sentence.index)}
-                    aria-label={`Frase ${sentence.index + 1}`}
+                    aria-label={`Frase ${sentence.index + 1}${isStart ? ', inizio' : ''}${endSentence !== null && sentence.index === endSentence ? ', fine' : ''}`}
                   >
                     {sentence.index + 1}
+                    {isStart && <span className="sentence-marker">Inizio</span>}
+                    {endSentence !== null && sentence.index === endSentence && (
+                      <span className="sentence-marker">Fine</span>
+                    )}
                   </button>
                   <span className="sentence-words">
                     {sentence.words.map((wordItem, wi) => {
                       const wordCurrent =
                         isCurrent && currentWord !== undefined && wi === currentWord
                       const wordSelected = inRange(sentence.index, wi)
+                      const wordStart =
+                        isStart && wi === startWord
+                      const wordEnd =
+                        endSentence !== null &&
+                        endWord !== null &&
+                        sentence.index === endSentence &&
+                        wi === endWord
                       return (
                         <button
                           key={wordItem.id}
@@ -601,6 +632,8 @@ export function ArticleNarration({
                           className={[
                             'article-word',
                             wordSelected ? 'in-range' : '',
+                            wordStart ? 'is-word-start' : '',
+                            wordEnd ? 'is-word-end' : '',
                             wordCurrent ? 'is-current' : '',
                             isPaused && wordCurrent ? 'is-paused' : '',
                           ]
