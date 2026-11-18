@@ -168,9 +168,17 @@ function pickImage(media: MediatorMedia): string | undefined {
   )
 }
 
+const SECTION_CACHE_TTL_MS = 30 * 60 * 1000
+const sectionCache = new Map<string, { at: number; tracks: Track[] }>()
+
 export async function fetchSectionTracks(
   section: SectionDef,
 ): Promise<Track[]> {
+  const cached = sectionCache.get(section.slug)
+  if (cached && Date.now() - cached.at < SECTION_CACHE_TTL_MS) {
+    return cached.tracks.map((track) => ({ ...track }))
+  }
+
   const url = `${API}/categories/${LANG}/${section.apiKey}?detailed=1&clientType=www`
   const res = await fetch(url)
   if (!res.ok) {
@@ -197,7 +205,8 @@ export async function fetchSectionTracks(
     })
   }
 
-  return tracks
+  sectionCache.set(section.slug, { at: Date.now(), tracks })
+  return tracks.map((track) => ({ ...track }))
 }
 
 export async function fetchTracksForSlugs(

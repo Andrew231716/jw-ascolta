@@ -807,6 +807,26 @@ code {
   gap: 0.85rem;
 }
 
+.pages-banner {
+  margin: 0.75rem 0 0;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid rgba(212, 164, 90, 0.45);
+  background: var(--gold-soft);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.pages-banner a {
+  color: inherit;
+  font-weight: 600;
+}
+
+.unified-results {
+  display: grid;
+  gap: 0.65rem;
+  margin-block: 0.75rem 1.25rem;
+}
+
 .article-narration-head {
   display: grid;
   gap: 0.35rem;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArticleNarration } from './ArticleNarration'
 import { listBookmarks, loadBookmark, type NarrationBookmark } from './articleText'
 import { formatDuration, normalizeTitle, type Track } from './catalog'
@@ -69,6 +69,8 @@ export function ListeningLibrary({
   onReaderClose,
   playbackTime = 0,
   playingTrackId = null,
+  initialKind = 'articles',
+  initialSearch = '',
 }: {
   active: boolean
   onPlay: (tracks: Track[], index?: number, position?: number) => void
@@ -81,8 +83,10 @@ export function ListeningLibrary({
   onReaderClose?: () => void
   playbackTime?: number
   playingTrackId?: string | null
+  initialKind?: Kind
+  initialSearch?: string
 }) {
-  const [kind, setKind] = useState<Kind>('articles')
+  const [kind, setKind] = useState<Kind>(initialKind)
   const [topics, setTopics] = useState<Topic[]>([])
   const [topic, setTopic] = useState('')
   const [tracks, setTracks] = useState<Entry[]>([])
@@ -93,7 +97,7 @@ export function ListeningLibrary({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [loadingTopics, setLoadingTopics] = useState(true)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(initialSearch)
   const [submitted, setSubmitted] = useState('')
   const [theme, setTheme] = useState('')
   const [official, setOfficial] = useState('')
@@ -105,6 +109,26 @@ export function ListeningLibrary({
   useEffect(() => {
     if (initialReader) setReader(initialReader)
   }, [initialReader])
+
+  const lastExternalSearch = useRef('')
+  useEffect(() => {
+    if (!active) return
+    const nextQuery = initialSearch.trim()
+    if (!nextQuery || nextQuery === lastExternalSearch.current) return
+    lastExternalSearch.current = nextQuery
+    setKind(initialKind)
+    setQuery(nextQuery)
+    setTracks([])
+    setPending([])
+    setNext(null)
+    setOffset(0)
+    setError('')
+    setTheme('')
+    setOfficial('')
+    setLoading(true)
+    setSubmitted(nextQuery)
+    setRetry((value) => value + 1)
+  }, [active, initialSearch, initialKind])
 
   useEffect(() => {
     if (!active) {
@@ -320,9 +344,17 @@ export function ListeningLibrary({
         <p role="status">
           {loading && submitted && !topic && offset > 0
             ? kind === 'videos'
-              ? 'Cerco ancora nei sottotitoli…'
-              : 'Cerco ancora in altre categorie JW.org…'
-            : 'Caricamento da JW.org…'}
+              ? `Cerco ancora nei sottotitoli… · ${tracks.length} trovati finora`
+              : `Cerco ancora in altre categorie JW.org… · ${tracks.length + pending.length} trovati finora`
+            : loading && submitted
+              ? `Ricerca «${submitted}» in corso…`
+              : 'Caricamento da JW.org…'}
+        </p>
+      )}
+      {!loading && submitted && (tracks.length > 0 || pending.length > 0) && (
+        <p className="section-lede" role="status">
+          {tracks.length + pending.length} risultat{tracks.length + pending.length === 1 ? 'o' : 'i'}
+          {next !== null ? ' · puoi continuare la ricerca' : ' · ricerca completata'}
         </p>
       )}
       {error && <p role="alert">{error} <button className="btn ghost small" onClick={() => {
@@ -392,7 +424,7 @@ export function ListeningLibrary({
           </p>
           <ul className="library-list">
             {pending.map((item) => {
-              const saved = bookmarkTick >= 0 ? loadBookmark(item.id) : null
+              const saved = loadBookmark(item.id)
               return (
                 <li className="listening-result pending" key={item.id}>
                   <div className="queue-item">

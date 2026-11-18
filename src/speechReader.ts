@@ -1,3 +1,5 @@
+import { onPauseNarration, requestPauseMusic } from './audioBus'
+
 /** Voce narrativa neurale cloud — non quella del dispositivo. */
 
 export type SpeechStatus =
@@ -87,6 +89,28 @@ export function primeNarrationAudio(): void {
   }
 }
 
+let activeNarrationPause: (() => void) | null = null
+
+/** Stop Isabella / neural TTS without destroying the shared element. */
+export function pauseNarrationAudio(): void {
+  try {
+    activeNarrationPause?.()
+  } catch {
+    /* ignore */
+  }
+  const el = primedAudio
+  if (!el) return
+  try {
+    el.pause()
+  } catch {
+    /* ignore */
+  }
+}
+
+if (typeof window !== 'undefined') {
+  onPauseNarration(() => pauseNarrationAudio())
+}
+
 async function fetchNeuralChunk(
   text: string,
   voice: NarrationVoiceId,
@@ -151,6 +175,8 @@ export async function speakSentences(
     onStatus?.('error', 'Testo vuoto.')
     return { stop() {}, pause() {}, resume() {}, getProgress: () => null }
   }
+
+  requestPauseMusic()
 
   let aborted = false
   let pausedGate: Promise<void> | null = null
@@ -321,10 +347,11 @@ export async function speakSentences(
 
   void run()
 
-  return {
+  const handle: SpeakHandle = {
     stop(opts) {
       aborted = true
       finished = true
+      if (activeNarrationPause === handle.pause) activeNarrationPause = null
       cleanup()
       onStatus?.(opts?.completed ? 'completed' : 'idle')
     },
@@ -340,6 +367,7 @@ export async function speakSentences(
     },
     resume() {
       if (aborted) return
+      requestPauseMusic()
       if (resumeGate) {
         resumeGate()
         resumeGate = null
@@ -355,6 +383,8 @@ export async function speakSentences(
     },
     getProgress: () => progressNow(),
   }
+  activeNarrationPause = () => handle.pause()
+  return handle
 }
 
 export async function speakArticle(

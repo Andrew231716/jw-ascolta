@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Track } from './catalog'
 import {
+  clearVideoBookmark,
+  loadVideoBookmark,
+  pushRecent,
+  saveVideoBookmark,
+} from './recentStore'
+import {
   cueMatchesQuery,
   fetchSubtitles,
   formatCueTime,
@@ -51,30 +57,49 @@ export function VideoClipReader({
   const [startIndex, setStartIndex] = useState(0)
   const [endIndex, setEndIndex] = useState<number | null>(null)
   const [jumpNote, setJumpNote] = useState('')
+  const [savedNote, setSavedNote] = useState('')
   const firstHitRef = useRef<HTMLElement | null>(null)
+  const saved = loadVideoBookmark(track.id)
 
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true)
     setError('')
+    setSavedNote('')
     fetchSubtitles(track.subtitleUrl, controller.signal)
       .then((parsed) => {
         if (controller.signal.aborted) return
         if (!parsed.length) throw new Error('Nessuna riga di sottotitoli trovata.')
         setCues(parsed)
-        const hit = query.trim()
-          ? parsed.findIndex((cue) => cueMatchesQuery(cue.text, query))
-          : -1
-        if (hit >= 0) {
-          setStartIndex(hit)
-          setEndIndex(hit)
+        const bookmark = loadVideoBookmark(track.id)
+        if (
+          bookmark &&
+          bookmark.startCueIndex >= 0 &&
+          bookmark.startCueIndex < parsed.length
+        ) {
+          setStartIndex(bookmark.startCueIndex)
+          setEndIndex(
+            bookmark.endCueIndex != null && bookmark.endCueIndex < parsed.length
+              ? bookmark.endCueIndex
+              : bookmark.startCueIndex,
+          )
           setSelectMode('end')
-          setJumpNote(`Prima occorrenza di «${query.trim()}» a ${formatCueTime(parsed[hit].start)}`)
+          setJumpNote(`Ripresa salvata · «${bookmark.snippet}»`)
         } else {
-          setStartIndex(0)
-          setEndIndex(null)
-          setSelectMode('start')
-          setJumpNote('')
+          const hit = query.trim()
+            ? parsed.findIndex((cue) => cueMatchesQuery(cue.text, query))
+            : -1
+          if (hit >= 0) {
+            setStartIndex(hit)
+            setEndIndex(hit)
+            setSelectMode('end')
+            setJumpNote(`Prima occorrenza di «${query.trim()}» a ${formatCueTime(parsed[hit].start)}`)
+          } else {
+            setStartIndex(0)
+            setEndIndex(null)
+            setSelectMode('start')
+            setJumpNote('')
+          }
         }
         setLoading(false)
       })
@@ -84,7 +109,7 @@ export function VideoClipReader({
         setLoading(false)
       })
     return () => controller.abort()
-  }, [track.subtitleUrl, query])
+  }, [track.subtitleUrl, query, track.id])
 
   useEffect(() => {
     if (loading || !firstHitRef.current) return
@@ -134,6 +159,28 @@ export function VideoClipReader({
     setJumpNote(`Occorrenza a ${formatCueTime(cues[next].start)}`)
   }
 
+  function persistBookmark() {
+    if (!startCue || !endCue) return
+    saveVideoBookmark({
+      trackId: track.id,
+      title: track.title,
+      url: track.url,
+      source: track.source,
+      subtitleUrl: track.subtitleUrl,
+      duration: track.duration,
+      sectionSlug: track.sectionSlug,
+      sectionName: track.sectionName,
+      clipStart: startCue.start,
+      clipEnd: endCue.end,
+      startCueIndex: startIndex,
+      endCueIndex: endIndex,
+      query: query.trim() || undefined,
+      snippet: startCue.text.slice(0, 80),
+      updatedAt: Date.now(),
+    })
+    setSavedNote('Brano salvato · riprendi da qui')
+  }
+
   function playSelected() {
     if (!startCue || !endCue) return
     const clip: Track = {
@@ -141,6 +188,17 @@ export function VideoClipReader({
       clipStart: startCue.start,
       clipEnd: endCue.end,
     }
+    pushRecent({
+      id: `video:${track.id}:${startCue.start}-${endCue.end}`,
+      title: track.title,
+      kind: 'video',
+      track: clip,
+      source: track.source,
+      clipStart: startCue.start,
+      clipEnd: endCue.end,
+      query: query.trim() || undefined,
+    })
+    persistBookmark()
     onPlayClip(clip, startCue.start)
   }
 
@@ -238,7 +296,23 @@ export function VideoClipReader({
             <button type="button" className="btn primary" onClick={playSelected}>
               Ascolta il brano selezionato
             </button>
+            <button type="button" className="btn ghost" onClick={persistBookmark}>
+              Salva brano
+            </button>
+            {saved && (
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  clearVideoBookmark(track.id)
+                  setSavedNote('Segnalibro rimosso')
+                }}
+              >
+                Rimuovi salvataggio
+              </button>
+            )}
           </div>
+          {savedNote && <p className="narration-status">{savedNote}</p>}
 
           <div className="article-body subtitle-cues">
             {cues.map((cue) => {

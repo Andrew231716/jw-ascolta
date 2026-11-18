@@ -15,9 +15,18 @@ import {
 import { listBookmarks } from './articleText'
 import { useAudioPlayer } from './useAudioPlayer'
 import { ListeningLibrary } from './ListeningLibrary'
+import {
+  isStaticMirrorHost,
+  listRecent,
+  listVideoBookmarks,
+  pushRecent,
+  type RecentItem,
+  type VideoClipBookmark,
+} from './recentStore'
 import './App.css'
 
 type View = 'home' | 'siri'
+type HomeTab = 'music' | 'listening' | 'library'
 
 type Session = { tracks: Track[]; index: number; position: number; updatedAt?: number }
 type Collection = { id: string; name: string; tracks: Track[] }
@@ -140,9 +149,16 @@ export default function App() {
   const [later, setLater] = useState(() => readSaved<Track[]>('later', []))
   const [speed, setSpeed] = useState(1)
   const [stopAtEnd, setStopAtEnd] = useState(true)
-  const [libraryOpen, setLibraryOpen] = useState(Boolean(initial.openLibrary))
+  const [homeTab, setHomeTab] = useState<HomeTab>(
+    initial.openLibrary ? 'listening' : 'music',
+  )
+  const libraryOpen = homeTab === 'listening'
+  const myLibraryOpen = homeTab === 'library'
   const [queueExpanded, setQueueExpanded] = useState(false)
   const [titleQuery, setTitleQuery] = useState(initial.title)
+  const [unifiedQuery, setUnifiedQuery] = useState('')
+  const [listeningSearch, setListeningSearch] = useState('')
+  const [listeningKind, setListeningKind] = useState<'articles' | 'videos'>('articles')
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const siriFocus = initial.siriFocus
   const player = useAudioPlayer()
@@ -158,15 +174,20 @@ export default function App() {
   )
   const [collectionName, setCollectionName] = useState('')
   const [results, setResults] = useState<Track[] | null>(null)
+  const [unifiedMusicHits, setUnifiedMusicHits] = useState<Track[] | null>(null)
   const [timer, setTimer] = useState<number | null>(null)
   const [minutes, setMinutes] = useState('30')
+  const [timerFade, setTimerFade] = useState(true)
   const nowRef = useRef<HTMLElement>(null)
   const [showMini, setShowMini] = useState(false)
   const lastSession = useRef<Session | null>(null)
   const [articleBookmarks, setArticleBookmarks] = useState(() => listBookmarks())
+  const [videoBookmarks, setVideoBookmarks] = useState(() => listVideoBookmarks())
+  const [recent, setRecent] = useState(() => listRecent())
   const [resumeReader, setResumeReader] = useState<ResumeReader | null>(
     initial.initialReader,
   )
+  const staticMirror = useMemo(() => isStaticMirrorHost(), [])
   const { playlist, index, currentTime, pause } = player
 
   useEffect(() => {
@@ -175,7 +196,9 @@ export default function App() {
 
   useEffect(() => {
     setArticleBookmarks(listBookmarks())
-  }, [libraryOpen])
+    setVideoBookmarks(listVideoBookmarks())
+    setRecent(listRecent())
+  }, [homeTab])
 
   useEffect(() => {
     if (!playlist[index]) return
@@ -186,6 +209,20 @@ export default function App() {
       updatedAt: Date.now(),
     }
   }, [playlist, index, currentTime])
+
+  useEffect(() => {
+    const track = playlist[index]
+    if (!track || currentTime < 1.5) return
+    const kind = track.id.startsWith('video-') || track.clipStart != null ? 'video' : 'music'
+    pushRecent({
+      id: `${kind}:${track.id}`,
+      title: track.title,
+      kind,
+      track,
+      clipStart: track.clipStart,
+      clipEnd: track.clipEnd,
+    })
+  }, [playlist, index])
 
   useEffect(() => {
     const persist = () => {
@@ -211,12 +248,16 @@ export default function App() {
   useEffect(() => saveLocal('favorites', favorites), [favorites])
   useEffect(() => saveLocal('collections', collections), [collections])
 
+  const fadeOutAndPause = player.fadeOutAndPause
   useEffect(() => {
     if (timer === null) return
     const stop = () => {
       if (Date.now() < timer) return
-      pause()
-      setTimer(null)
+      void (async () => {
+        if (timerFade) await fadeOutAndPause(4500)
+        else pause()
+        setTimer(null)
+      })()
     }
     const timeout = window.setTimeout(stop, Math.max(0, timer - Date.now()))
     document.addEventListener('visibilitychange', stop)
@@ -224,7 +265,7 @@ export default function App() {
       window.clearTimeout(timeout)
       document.removeEventListener('visibilitychange', stop)
     }
-  }, [timer, pause])
+  }, [timer, pause, timerFade, fadeOutAndPause])
 
   useEffect(() => {
     if (view !== 'home' || !nowRef.current) return
@@ -260,7 +301,83 @@ export default function App() {
 
   function playTracks(tracks: Track[], start = 0, position = 0) {
     setStatus(null)
+    const track = tracks[start]
+    if (track) {
+      const kind = track.id.startsWith('video-') || track.clipStart != null ? 'video' : 'music'
+      pushRecent({
+        id: `${kind}:${track.id}`,
+        title: track.title,
+        kind,
+        track,
+        clipStart: track.clipStart,
+        clipEnd: track.clipEnd,
+      })
+      setRecent(listRecent())
+    }
     void player.setPlaylist(tracks, true, start, position)
+  }
+
+  function playRecentItem(item: RecentItem) {
+    if (item.kind === 'article' && item.source) {
+      setResumeReader({ id: item.id.replace(/^article:/, ''), title: item.title, source: item.source })
+      setHomeTab('listening')
+      return
+    }
+    if (item.track) {
+      playTracks([item.track], 0, item.clipStart || item.track.clipStart || 0)
+    }
+  }
+
+  function playVideoBookmark(bookmark: VideoClipBookmark) {
+    const track: Track = {
+      id: bookmark.trackId,
+      title: bookmark.title,
+      url: bookmark.url,
+      duration: bookmark.duration,
+      sectionSlug: (bookmark.sectionSlug || 'tutto') as Track['sectionSlug'],
+      sectionName: bookmark.sectionName,
+      subtitleUrl: bookmark.subtitleUrl,
+      clipStart: bookmark.clipStart,
+      clipEnd: bookmark.clipEnd,
+    }
+    playTracks([track], 0, bookmark.clipStart)
+  }
+
+  function exportQueueM3u() {
+    const lines = ['#EXTM3U']
+    for (const track of player.playlist) {
+      lines.push(`#EXTINF:${Math.round(track.duration || -1)},${track.title}`)
+      lines.push(track.url)
+    }
+    const blob = new Blob([lines.join('\n')], { type: 'audio/x-mpegurl' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'jw-ascolta-coda.m3u'
+    a.click()
+    URL.revokeObjectURL(url)
+    setStatus('Coda esportata come M3U')
+  }
+
+  async function runUnifiedSearch() {
+    const q = normalizeTitle(unifiedQuery)
+    if (!q || catalogLoading) return
+    setCatalogLoading(true)
+    setUnifiedMusicHits(null)
+    setResults(null)
+    setStatus(null)
+    try {
+      const { tracks, unavailable } = await fetchTracksForSlugs(['tutto'])
+      const hits = tracks.filter((track) => normalizeTitle(track.title).includes(q))
+      setUnifiedMusicHits(hits)
+      const parts = [`${hits.length} brani musicali`]
+      if (unavailable.length) parts.push(`categorie non disponibili: ${unavailable.join(', ')}`)
+      setStatus(parts.join(' · '))
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Catalogo non disponibile')
+    } finally {
+      setCatalogLoading(false)
+    }
   }
 
   function closePlayback() {
@@ -315,14 +432,27 @@ export default function App() {
         matchedTitle = matched.title
       }
 
+      const baseStatus = playlist.length
+        ? matchedTitle
+          ? `Da «${matchedTitle}» · ${playlist.length} brani · poi continua`
+          : `${playlist.length} brani · ${playMode === 'shuffle' ? 'casuale' : 'in ordine'}`
+        : null
       setStatus(
-        playlist.length
-          ? matchedTitle
-            ? `Da «${matchedTitle}» · ${playlist.length} brani · poi continua`
-            : `${playlist.length} brani · ${playMode === 'shuffle' ? 'casuale' : 'in ordine'}`
-          : null,
+        unavailable.length
+          ? [baseStatus, `Categorie non disponibili: ${unavailable.join(', ')}`]
+              .filter(Boolean)
+              .join(' · ')
+          : baseStatus,
       )
-      if (unavailable.length) setStatus(`Categorie non disponibili: ${unavailable.join(", ")}`)
+      if (playlist[0]) {
+        pushRecent({
+          id: `music:${playlist[0].id}`,
+          title: playlist[0].title,
+          kind: 'music',
+          track: playlist[0],
+        })
+        setRecent(listRecent())
+      }
       await player.setPlaylist(playlist, autoplay, 0)
 
       const url = new URL(window.location.href)
@@ -372,8 +502,18 @@ export default function App() {
     })
   }
 
+  const clipStart = player.clipStart ?? 0
+  const clipEnd = player.clipEnd ?? player.duration
+  const clipSpan = Math.max(0.01, (clipEnd || 0) - clipStart)
   const progress =
-    player.duration > 0 ? player.currentTime / player.duration : 0
+    player.duration > 0 || player.clipEnd != null
+      ? Math.min(1, Math.max(0, (player.currentTime - clipStart) / clipSpan))
+      : 0
+  const displayElapsed = Math.max(0, player.currentTime - clipStart)
+  const displayDuration =
+    player.clipEnd != null || player.clipStart != null
+      ? clipSpan
+      : player.duration
   const shareUrl = buildShareUrl(effectiveSlugs, mode, titleQuery)
   const visibleCount = queueExpanded ? player.playlist.length : 40
 
@@ -450,16 +590,27 @@ export default function App() {
                       title: articleBookmarks[0].title,
                       source: articleBookmarks[0].source,
                     })
-                    setLibraryOpen(true)
+                    setHomeTab('listening')
                   },
                 }
               : null
-            const target =
-              music && article
-                ? article.updatedAt >= music.updatedAt
-                  ? article
-                  : music
-                : music || article
+            const video = videoBookmarks[0]
+              ? {
+                  kind: 'video' as const,
+                  updatedAt: videoBookmarks[0].updatedAt || 0,
+                  title: videoBookmarks[0].title,
+                  meta: `Video · «${videoBookmarks[0].snippet}»`,
+                  run: () => playVideoBookmark(videoBookmarks[0]),
+                }
+              : null
+            const candidates = [music, article, video].filter(Boolean) as Array<{
+              kind: string
+              updatedAt: number
+              title: string
+              meta: string
+              run: () => void
+            }>
+            const target = candidates.sort((a, b) => b.updatedAt - a.updatedAt)[0]
             if (!target) return null
             return (
               <button
@@ -473,25 +624,41 @@ export default function App() {
               </button>
             )
           })()}
-          <nav className="top-nav" aria-label="Libreria">
-            <button type="button" className="nav-link" aria-pressed={!libraryOpen}
+          {staticMirror && (
+            <p className="pages-banner" role="status">
+              Stai usando il mirror statico: catalogo articoli, Isabella e CarPlay
+              funzionano su{' '}
+              <a href="https://jw-ascolta.vercel.app">jw-ascolta.vercel.app</a>.
+            </p>
+          )}
+          <nav className="top-nav" aria-label="Sezioni principali">
+            <button type="button" className="nav-link" aria-pressed={homeTab === 'music'}
               onClick={() => {
-                setLibraryOpen(false)
+                setHomeTab('music')
                 setResumeReader(null)
-                setArticleBookmarks(listBookmarks())
               }}>Musica</button>
-            <button type="button" className="nav-link" aria-pressed={libraryOpen}
+            <button type="button" className="nav-link" aria-pressed={homeTab === 'listening'}
               onClick={() => {
                 setArticleBookmarks(listBookmarks())
-                setLibraryOpen(true)
+                setVideoBookmarks(listVideoBookmarks())
+                setHomeTab('listening')
               }}>Articoli e video</button>
+            <button type="button" className="nav-link" aria-pressed={homeTab === 'library'}
+              onClick={() => {
+                setRecent(listRecent())
+                setVideoBookmarks(listVideoBookmarks())
+                setHomeTab('library')
+              }}>La mia libreria</button>
             <button type="button" className="nav-link" onClick={openSiriGuide}>Siri e CarPlay</button>
-            <a className="nav-link" href="#libreria">La mia libreria</a>
           </nav>
-          {!libraryOpen && <div className="cta-row">
+          {homeTab === 'music' && <div className="cta-row">
             <button className="btn primary" disabled={catalogLoading}
               onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
               {catalogLoading ? 'Caricamento…' : 'Riproduci musica a caso'}
+            </button>
+            <button className="btn ghost" disabled={catalogLoading}
+              onClick={() => void startPlayback(['adunanze'], 'order', true)}>
+              Playlist riunione
             </button>
           </div>}
         </header>
@@ -542,8 +709,8 @@ export default function App() {
                 onChange={(event) => player.seek(Number(event.target.value) / 1000)}
               />
               <div className="times">
-                <span>{formatDuration(player.currentTime)}</span>
-                <span>{formatDuration(player.duration)}</span>
+                <span>{formatDuration(displayElapsed)}</span>
+                <span>{formatDuration(displayDuration)}</span>
               </div>
               <div className="controls">
                 <button className="icon-btn" onClick={player.playPrev} aria-label="Precedente">
@@ -611,6 +778,22 @@ export default function App() {
             />{' '}
             Ferma a fine coda
           </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={player.stopAfterCurrent}
+              onChange={(event) => player.setStopAfterCurrent(event.target.checked)}
+            />{' '}
+            Ferma dopo questo brano
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={timerFade}
+              onChange={(event) => setTimerFade(event.target.checked)}
+            />{' '}
+            Fade-out del timer
+          </label>
           <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
             {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}
           </select></label>
@@ -618,6 +801,11 @@ export default function App() {
             setTimer(timer === null ? Date.now() + Number(minutes) * 60_000 : null)}>
             {timer === null ? 'Avvia timer' : 'Annulla timer'}
           </button>
+          {player.playlist.length > 0 && (
+            <button type="button" className="btn ghost small" onClick={exportQueueM3u}>
+              Esporta coda M3U
+            </button>
+          )}
           {timer !== null && <span role="status">Pausa alle {new Date(timer).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span>}
         </section>
       )}
@@ -626,9 +814,12 @@ export default function App() {
         <ListeningLibrary
           active={libraryOpen}
           initialReader={resumeReader}
+          initialKind={listeningKind}
+          initialSearch={listeningSearch}
           onReaderClose={() => {
             setResumeReader(null)
             setArticleBookmarks(listBookmarks())
+            setListeningSearch('')
           }}
           onPlay={playTracks}
           onAppend={player.append}
@@ -644,8 +835,45 @@ export default function App() {
         />
       </div>}
 
-      {!siriFocus && !libraryOpen && (
+      {!siriFocus && homeTab === 'music' && (
       <section className="chooser" id="scegli">
+        <h2>Cerca in tutta l’app</h2>
+        <form className="title-row" onSubmit={(event) => {
+          event.preventDefault()
+          void runUnifiedSearch()
+        }}>
+          <input
+            type="search"
+            aria-label="Cerca musica, articoli o video"
+            placeholder="Parola in musica, articoli o video…"
+            value={unifiedQuery}
+            maxLength={120}
+            onChange={(event) => setUnifiedQuery(event.target.value)}
+          />
+          <button className="btn primary" disabled={!unifiedQuery.trim() || catalogLoading}>Cerca</button>
+        </form>
+        {unifiedMusicHits && (
+          <div className="unified-results">
+            <p className="section-lede">
+              Musica: {unifiedMusicHits.length} risultat{unifiedMusicHits.length === 1 ? 'o' : 'i'}
+            </p>
+            {unifiedMusicHits.length > 0 && (
+              <TrackList tracks={unifiedMusicHits.slice(0, 40)} onPlay={(i) => playTracks(unifiedMusicHits, i)} />
+            )}
+            <div className="result-actions">
+              <button type="button" className="btn ghost small" onClick={() => {
+                setListeningKind('articles')
+                setListeningSearch(unifiedQuery.trim())
+                setHomeTab('listening')
+              }}>Cerca anche negli articoli</button>
+              <button type="button" className="btn ghost small" onClick={() => {
+                setListeningKind('videos')
+                setListeningSearch(unifiedQuery.trim())
+                setHomeTab('listening')
+              }}>Cerca anche nei video</button>
+            </div>
+          </div>
+        )}
         <h2>Sezioni</h2>
         <p className="section-lede">
           Seleziona una o più sezioni, oppure avvia da un titolo: poi continua
@@ -736,7 +964,7 @@ export default function App() {
       </section>
       )}
 
-      {!siriFocus && !libraryOpen && (
+      {!siriFocus && homeTab === 'music' && (
       <section className="siri-teaser" id="siri">
         <h2>Siri e CarPlay</h2>
         <p className="section-lede">
@@ -830,8 +1058,41 @@ export default function App() {
         </section>
       )}
 
-      {!siriFocus && (
+      {!siriFocus && myLibraryOpen && (
         <section className="chooser" id="libreria" aria-label="Libreria personale">
+          <h2>Ascoltati di recente</h2>
+          {recent.length ? (
+            <ul className="library-list">
+              {recent.slice(0, 20).map((item) => (
+                <li key={item.id + item.updatedAt}>
+                  <button className="queue-item" onClick={() => playRecentItem(item)}>
+                    <span className="q-title">{item.title}</span>
+                    <span className="q-meta">
+                      {item.kind === 'music' ? 'Musica' : item.kind === 'video' ? 'Video' : 'Articolo'}
+                      {item.query ? ` · «${item.query}»` : ''}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>Qui compariranno gli ultimi ascolti.</p>
+          )}
+          <h2>Brani video salvati</h2>
+          {videoBookmarks.length ? (
+            <ul className="library-list">
+              {videoBookmarks.map((bookmark) => (
+                <li key={bookmark.trackId}>
+                  <button className="queue-item" onClick={() => playVideoBookmark(bookmark)}>
+                    <span className="q-title">{bookmark.title}</span>
+                    <span className="q-meta">«{bookmark.snippet}»</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>Salva un brano da «Sottotitoli · brano» per ritrovarlo qui.</p>
+          )}
           <h2>Ascolta dopo</h2>
           {later.length ? (
             <>
@@ -1026,9 +1287,23 @@ function SiriGuide({
         <span role="status">{copyStatus}</span>
       </div>
       <p className="lede">
-        Per iniziare, copia uno degli URL CarPlay qui sotto e incollalo
-        nell’azione «Apri URL» di un nuovo comando su iPhone. Provalo prima di partire.
+        Scorciatoia rapida: crea un comando iPhone con sola azione «Apri URL»,
+        incolla uno dei link sotto e aggiungilo a Siri.
       </p>
+      <div className="url-box highlight">
+        <p className="label">Partenza in 1 tocco · Canzoni casuali (CarPlay)</p>
+        <code>{makeCarplayUrl('canzoni', 'shuffle')}</code>
+        <button className="btn primary" onClick={() => void copyLink(makeCarplayUrl('canzoni', 'shuffle'))}>
+          Copia e usa in Comandi
+        </button>
+      </div>
+      <div className="url-box">
+        <p className="label">Playlist riunione · Adunanze in ordine</p>
+        <code>{makeCarplayUrl('adunanze', 'order')}</code>
+        <button className="btn ghost" onClick={() => void copyLink(makeCarplayUrl('adunanze', 'order'))}>
+          Copia URL riunione
+        </button>
+      </div>
 
       <div className="url-box highlight">
         <p className="label">Regola unica per CarPlay</p>

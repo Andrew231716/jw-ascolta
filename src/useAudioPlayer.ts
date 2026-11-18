@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { onPauseMusic, requestPauseNarration } from './audioBus'
 import type { Track } from './catalog'
 
 export interface PlayerState {
@@ -9,8 +10,11 @@ export interface PlayerState {
   error: string | null
   currentTime: number
   duration: number
+  clipStart: number | null
+  clipEnd: number | null
   /** True when browser blocked autoplay; waiting for a tap */
   needsGesture: boolean
+  stopAfterCurrent: boolean
 }
 
 const initial: PlayerState = {
@@ -21,7 +25,10 @@ const initial: PlayerState = {
   error: null,
   currentTime: 0,
   duration: 0,
+  clipStart: null,
+  clipEnd: null,
   needsGesture: false,
+  stopAfterCurrent: false,
 }
 
 export function useAudioPlayer() {
@@ -64,6 +71,11 @@ export function useAudioPlayer() {
           duration: audio.duration || s.duration,
         }))
         window.setTimeout(() => {
+          if (stopAfterCurrentRef.current) {
+            stopAfterCurrentRef.current = false
+            setState((s) => ({ ...s, stopAfterCurrent: false, playing: false }))
+            return
+          }
           if (repeat.current || indexRef.current + 1 < playlistRef.current.length) {
             playNextRef.current()
           }
@@ -138,12 +150,14 @@ export function useAudioPlayer() {
   const clipEndRef = useRef<number | null>(null)
   const clipStartRef = useRef<number | null>(null)
   const clipEndingRef = useRef(false)
+  const stopAfterCurrentRef = useRef(false)
 
   const loadAndPlay = useCallback(async (track: Track, autoplay: boolean, position = 0) => {
     const audio = audioRef.current
     if (!audio) return
     needsGestureRef.current = false
     clipEndingRef.current = false
+    requestPauseNarration()
     clipEndRef.current =
       typeof track.clipEnd === 'number' && Number.isFinite(track.clipEnd) ? track.clipEnd : null
     clipStartRef.current =
@@ -163,6 +177,8 @@ export function useAudioPlayer() {
       needsGesture: false,
       currentTime: startAt,
       duration: track.duration || 0,
+      clipStart: clipStartRef.current,
+      clipEnd: clipEndRef.current,
     }))
     if (pendingSeek.current) audio.removeEventListener('loadedmetadata', pendingSeek.current)
     pendingSeek.current = null
@@ -205,6 +221,11 @@ export function useAudioPlayer() {
   const playNext = useCallback(() => {
     const list = playlistRef.current
     if (list.length === 0) return
+    // Manual next clears "stop after this track".
+    if (stopAfterCurrentRef.current) {
+      stopAfterCurrentRef.current = false
+      setState((s) => ({ ...s, stopAfterCurrent: false }))
+    }
     const next = (indexRef.current + 1) % list.length
     indexRef.current = next
     setState((s) => ({ ...s, index: next, error: null }))
@@ -212,6 +233,10 @@ export function useAudioPlayer() {
   }, [loadAndPlay])
 
   playNextRef.current = playNext
+
+  useEffect(() => onPauseMusic(() => {
+    audioRef.current?.pause()
+  }), [])
 
   const playPrev = useCallback(() => {
     const audio = audioRef.current
@@ -232,6 +257,11 @@ export function useAudioPlayer() {
     const audio = audioRef.current
     if (!audio) return
     const onEnded = () => {
+      if (stopAfterCurrentRef.current) {
+        stopAfterCurrentRef.current = false
+        setState((s) => ({ ...s, stopAfterCurrent: false, playing: false }))
+        return
+      }
       if (repeat.current || indexRef.current + 1 < playlistRef.current.length) playNext()
     }
     audio.addEventListener('ended', onEnded)
@@ -251,16 +281,18 @@ export function useAudioPlayer() {
     navigator.mediaSession.setActionHandler('seekbackward', (details) => {
       const audio = audioRef.current
       if (!audio) return
+      const floor = clipStartRef.current ?? 0
       audio.currentTime = Math.max(
-        0,
+        floor,
         audio.currentTime - (details.seekOffset || 10),
       )
     })
     navigator.mediaSession.setActionHandler('seekforward', (details) => {
       const audio = audioRef.current
       if (!audio) return
+      const ceiling = clipEndRef.current ?? audio.duration ?? audio.currentTime + 10
       audio.currentTime = Math.min(
-        audio.duration || audio.currentTime + 10,
+        ceiling,
         audio.currentTime + (details.seekOffset || 10),
       )
     })
@@ -268,7 +300,14 @@ export function useAudioPlayer() {
       navigator.mediaSession.setActionHandler('seekto', (details) => {
         const audio = audioRef.current
         if (!audio || details.seekTime == null) return
-        audio.currentTime = details.seekTime
+        const floor = clipStartRef.current ?? 0
+        const ceiling = clipEndRef.current ?? audio.duration ?? details.seekTime
+        // Media Session may report absolute or clip-relative times; clamp either way.
+        const absolute =
+          details.seekTime <= ceiling - floor + 0.5 && clipStartRef.current != null
+            ? floor + details.seekTime
+            : details.seekTime
+        audio.currentTime = Math.min(ceiling, Math.max(floor, absolute))
       })
     } catch {
       /* older Safari */
@@ -281,11 +320,14 @@ export function useAudioPlayer() {
     if (!audio || !('mediaSession' in navigator)) return
     const sync = () => {
       if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
+      const floor = clipStartRef.current ?? 0
+      const ceiling = clipEndRef.current ?? audio.duration
+      const span = Math.max(0.01, ceiling - floor)
       try {
         navigator.mediaSession.setPositionState({
-          duration: audio.duration,
+          duration: span,
           playbackRate: audio.playbackRate || 1,
-          position: Math.min(audio.currentTime, audio.duration),
+          position: Math.min(span, Math.max(0, audio.currentTime - floor)),
         })
       } catch {
         /* ignore */
@@ -401,6 +443,7 @@ export function useAudioPlayer() {
     if (!audio) return
     if (audio.paused) {
       try {
+        requestPauseNarration()
         await audio.play()
         needsGestureRef.current = false
         setState((s) => ({ ...s, needsGesture: false, error: null }))
@@ -494,6 +537,10 @@ export function useAudioPlayer() {
       repeat.current = enabled
     },
     getRepeat: () => repeat.current,
+    setStopAfterCurrent: (enabled: boolean) => {
+      stopAfterCurrentRef.current = enabled
+      setState((s) => ({ ...s, stopAfterCurrent: enabled }))
+    },
     setSpeed: (rate: number) => {
       speed.current = rate
       if (audioRef.current) audioRef.current.playbackRate = rate
@@ -514,6 +561,20 @@ export function useAudioPlayer() {
     },
     resumeFromGesture,
     pause: () => audioRef.current?.pause(),
+    async fadeOutAndPause(ms = 4000) {
+      const audio = audioRef.current
+      if (!audio || audio.paused) return
+      const startVol = audio.volume
+      const steps = 20
+      const stepMs = Math.max(50, Math.floor(ms / steps))
+      for (let i = 1; i <= steps; i += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, stepMs))
+        if (!audioRef.current || audioRef.current !== audio) return
+        audio.volume = Math.max(0, startVol * (1 - i / steps))
+      }
+      audio.pause()
+      audio.volume = startVol
+    },
     /** Stop playback and empty the queue (music, articles, or video audio). */
     stopAndClear() {
       if (autoSkipTimer.current) window.clearTimeout(autoSkipTimer.current)
@@ -530,6 +591,9 @@ export function useAudioPlayer() {
       playlistRef.current = []
       indexRef.current = 0
       needsGestureRef.current = false
+      stopAfterCurrentRef.current = false
+      clipStartRef.current = null
+      clipEndRef.current = null
       setState({
         playlist: [],
         index: 0,
@@ -538,7 +602,10 @@ export function useAudioPlayer() {
         error: null,
         currentTime: 0,
         duration: 0,
+        clipStart: null,
+        clipEnd: null,
         needsGesture: false,
+        stopAfterCurrent: false,
       })
       if ('mediaSession' in navigator) {
         try {
