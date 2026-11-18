@@ -31,6 +31,10 @@ export interface Track {
   image?: string
   sectionSlug: SectionSlug
   sectionName: string
+  /** Optional audio clip window (seconds) for video subtitle ranges. */
+  clipStart?: number
+  clipEnd?: number
+  subtitleUrl?: string
 }
 
 export const SECTIONS: SectionDef[] = [

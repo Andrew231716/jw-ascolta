@@ -42,12 +42,40 @@ export function useAudioPlayer() {
     document.body.appendChild(audio)
     audioRef.current = audio
 
-    const onTime = () =>
+    const onTime = () => {
+      const end = clipEndRef.current
+      if (
+        end != null &&
+        !clipEndingRef.current &&
+        Number.isFinite(audio.currentTime) &&
+        audio.currentTime >= end - 0.05
+      ) {
+        clipEndingRef.current = true
+        try {
+          audio.pause()
+          audio.currentTime = end
+        } catch {
+          /* ignore */
+        }
+        setState((s) => ({
+          ...s,
+          playing: false,
+          currentTime: end,
+          duration: audio.duration || s.duration,
+        }))
+        window.setTimeout(() => {
+          if (repeat.current || indexRef.current + 1 < playlistRef.current.length) {
+            playNextRef.current()
+          }
+        }, 120)
+        return
+      }
       setState((s) => ({
         ...s,
         currentTime: audio.currentTime,
         duration: audio.duration || s.duration,
       }))
+    }
     const onPlay = () => {
       needsGestureRef.current = false
       setState((s) => ({
@@ -107,17 +135,33 @@ export function useAudioPlayer() {
   const pendingSeek = useRef<(() => void) | null>(null)
   const autoSkipTimer = useRef<number | null>(null)
   const playNextRef = useRef<() => void>(() => {})
+  const clipEndRef = useRef<number | null>(null)
+  const clipStartRef = useRef<number | null>(null)
+  const clipEndingRef = useRef(false)
 
   const loadAndPlay = useCallback(async (track: Track, autoplay: boolean, position = 0) => {
     const audio = audioRef.current
     if (!audio) return
     needsGestureRef.current = false
+    clipEndingRef.current = false
+    clipEndRef.current =
+      typeof track.clipEnd === 'number' && Number.isFinite(track.clipEnd) ? track.clipEnd : null
+    clipStartRef.current =
+      typeof track.clipStart === 'number' && Number.isFinite(track.clipStart)
+        ? track.clipStart
+        : null
+    const startAt =
+      position > 0
+        ? position
+        : clipStartRef.current && clipStartRef.current > 0
+          ? clipStartRef.current
+          : 0
     setState((s) => ({
       ...s,
       loading: true,
       error: null,
       needsGesture: false,
-      currentTime: 0,
+      currentTime: startAt,
       duration: track.duration || 0,
     }))
     if (pendingSeek.current) audio.removeEventListener('loadedmetadata', pendingSeek.current)
@@ -125,10 +169,11 @@ export function useAudioPlayer() {
     audio.src = track.url
     audio.load()
     audio.playbackRate = speed.current
-    if (position > 0) {
+    if (startAt > 0) {
       const restore = () => {
         pendingSeek.current = null
-        audio.currentTime = Math.min(position, Number.isFinite(audio.duration) ? audio.duration : position)
+        const limit = Number.isFinite(audio.duration) ? audio.duration : startAt
+        audio.currentTime = Math.min(startAt, limit)
       }
       if (audio.readyState >= 1) restore()
       else {
@@ -172,8 +217,9 @@ export function useAudioPlayer() {
     const audio = audioRef.current
     const list = playlistRef.current
     if (list.length === 0) return
-    if (audio && audio.currentTime > 3) {
-      audio.currentTime = 0
+    const floor = clipStartRef.current ?? 0
+    if (audio && audio.currentTime > floor + 3) {
+      audio.currentTime = floor
       return
     }
     const prev = (indexRef.current - 1 + list.length) % list.length
@@ -389,7 +435,10 @@ export function useAudioPlayer() {
   function seek(ratio: number) {
     const audio = audioRef.current
     if (!audio || !audio.duration) return
-    audio.currentTime = Math.max(0, Math.min(1, ratio)) * audio.duration
+    const start = clipStartRef.current ?? 0
+    const end = clipEndRef.current ?? audio.duration
+    const span = Math.max(0.01, end - start)
+    audio.currentTime = start + Math.max(0, Math.min(1, ratio)) * span
   }
 
   function jumpTo(index: number) {
@@ -452,7 +501,9 @@ export function useAudioPlayer() {
     skip: (seconds: number) => {
       const audio = audioRef.current
       if (audio && Number.isFinite(audio.duration)) {
-        audio.currentTime = Math.min(audio.duration, Math.max(0, audio.currentTime + seconds))
+        const start = clipStartRef.current ?? 0
+        const end = clipEndRef.current ?? audio.duration
+        audio.currentTime = Math.min(end, Math.max(start, audio.currentTime + seconds))
       }
     },
     append: (track: Track) => {

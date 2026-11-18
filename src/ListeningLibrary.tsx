@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArticleNarration } from './ArticleNarration'
 import { listBookmarks, loadBookmark, type NarrationBookmark } from './articleText'
 import { formatDuration, normalizeTitle, type Track } from './catalog'
+import { VideoClipReader } from './VideoClipReader'
 
 type Kind = 'articles' | 'videos'
 type Topic = { id: string; name: string }
@@ -10,6 +11,7 @@ type Entry = Track & {
   topics: string[]
   description?: string
   matchIn?: string
+  subtitleUrl?: string
 }
 type Pending = {
   id: string
@@ -26,6 +28,7 @@ type Page = {
 }
 
 type ReaderTarget = { id: string; title: string; source: string }
+type VideoReaderTarget = Entry & { subtitleUrl: string }
 
 const themes = [
   ['Famiglia e figli', /famigli|matrimoni|figli|genitor|coniug|educaz/],
@@ -64,9 +67,11 @@ export function ListeningLibrary({
   onSave,
   initialReader = null,
   onReaderClose,
+  playbackTime = 0,
+  playingTrackId = null,
 }: {
   active: boolean
-  onPlay: (tracks: Track[], index?: number) => void
+  onPlay: (tracks: Track[], index?: number, position?: number) => void
   onAppend: (track: Track) => void
   later: Track[]
   onLater: (track: Track) => void
@@ -74,6 +79,8 @@ export function ListeningLibrary({
   onSave: (id: string, track: Track) => void
   initialReader?: ReaderTarget | null
   onReaderClose?: () => void
+  playbackTime?: number
+  playingTrackId?: string | null
 }) {
   const [kind, setKind] = useState<Kind>('articles')
   const [topics, setTopics] = useState<Topic[]>([])
@@ -91,6 +98,7 @@ export function ListeningLibrary({
   const [theme, setTheme] = useState('')
   const [official, setOfficial] = useState('')
   const [reader, setReader] = useState<ReaderTarget | null>(initialReader)
+  const [videoReader, setVideoReader] = useState<VideoReaderTarget | null>(null)
   const [bookmarks, setBookmarks] = useState<NarrationBookmark[]>(() => listBookmarks())
   const [bookmarkTick, setBookmarkTick] = useState(0)
 
@@ -99,7 +107,10 @@ export function ListeningLibrary({
   }, [initialReader])
 
   useEffect(() => {
-    if (!active) setReader(null)
+    if (!active) {
+      setReader(null)
+      setVideoReader(null)
+    }
   }, [active])
 
   useEffect(() => {
@@ -195,6 +206,21 @@ export function ListeningLibrary({
             )
             window.history.replaceState({}, '', url)
           }}
+        />
+      </section>
+    )
+  }
+
+  if (videoReader) {
+    return (
+      <section className="chooser listening-library">
+        <VideoClipReader
+          track={videoReader}
+          query={submitted}
+          currentTime={playbackTime}
+          playingTrackId={playingTrackId}
+          onClose={() => setVideoReader(null)}
+          onPlayClip={(clip, startSeconds) => onPlay([clip], 0, startSeconds)}
         />
       </section>
     )
@@ -337,6 +363,16 @@ export function ListeningLibrary({
                   Isabella · testo
                 </button>
               )}
+              {kind === 'videos' && track.subtitleUrl && (
+                <button
+                  className="btn ghost small"
+                  onClick={() =>
+                    setVideoReader({ ...track, subtitleUrl: track.subtitleUrl! })
+                  }
+                >
+                  Sottotitoli · brano
+                </button>
+              )}
               <button className="btn ghost small" aria-pressed={later.some((item) => item.id === track.id)}
                 onClick={() => onLater(track)}>{later.some((item) => item.id === track.id) ? 'Salvato · rimuovi' : 'Ascolta dopo'}</button>
               {collections.length > 0 && <select value="" aria-label={`Salva ${track.title} in raccolta`}
@@ -394,8 +430,9 @@ export function ListeningLibrary({
         : 'Carica altri'}</button>}
       {kind === 'videos' && (
         <p className="section-lede">
-          Mostra i video del catalogo JW.org (stream a bassa risoluzione, utili
-          da ascoltare).
+          Stream a bassa risoluzione da JW.org. Con «Sottotitoli · brano» vedi il
+          testo, evidenzi la ricerca e scegli da dove far partire e finire
+          l’audio.
         </p>
       )}
     </section>

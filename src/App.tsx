@@ -639,6 +639,8 @@ export default function App() {
           onSave={(id, track) => setCollections((list) => list.map((item) =>
             item.id === id && !item.tracks.some((savedTrack) => savedTrack.id === track.id)
               ? { ...item, tracks: [...item.tracks, track] } : item))}
+          playbackTime={player.currentTime}
+          playingTrackId={player.current?.id ?? null}
         />
       </div>}
 

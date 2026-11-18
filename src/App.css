@@ -1082,6 +1082,42 @@ code {
   font-weight: 700;
 }
 
+.range-swatch.hit {
+  background: #f4b183;
+}
+
+.search-hit {
+  background: rgba(244, 177, 131, 0.55);
+  color: #07161a;
+  font-weight: 700;
+  border-radius: 3px;
+  padding: 0.05rem 0.12rem;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.subtitle-cue.has-search-hit {
+  border-color: rgba(244, 177, 131, 0.45);
+}
+
+.subtitle-cue-text {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.video-clip-reader .subtitle-cues {
+  max-height: min(58vh, 520px);
+}
+
 .library-list {
   list-style: none;
   padding: 0;
