@@ -293,7 +293,9 @@ export function ListeningLibrary({
       {(loading || loadingTopics) && (
         <p role="status">
           {loading && submitted && !topic && offset > 0
-            ? 'Cerco ancora in altre categorie JW.org…'
+            ? kind === 'videos'
+              ? 'Cerco ancora nei sottotitoli…'
+              : 'Cerco ancora in altre categorie JW.org…'
             : 'Caricamento da JW.org…'}
         </p>
       )}
@@ -385,7 +387,11 @@ export function ListeningLibrary({
       {next !== null && <button className="btn ghost" disabled={loading || Boolean(error)} onClick={() => {
         setLoading(true)
         setOffset(next)
-      }}>{submitted && !topic ? 'Continua la ricerca' : 'Carica altri'}</button>}
+      }}>{submitted && !topic
+        ? kind === 'videos'
+          ? 'Cerca altri nei sottotitoli'
+          : 'Continua la ricerca'
+        : 'Carica altri'}</button>}
       {kind === 'videos' && (
         <p className="section-lede">
           Mostra i video del catalogo JW.org (stream a bassa risoluzione, utili

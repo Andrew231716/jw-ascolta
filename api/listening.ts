@@ -60,13 +60,116 @@ function normalizeQuery(value: string) {
     .trim()
 }
 
+/** Longest-first Italian endings so pazienza / paziente / pazienti share a stem. */
+const ITALIAN_SUFFIXES = [
+  'mente',
+  'azione',
+  'azioni',
+  'izione',
+  'izioni',
+  'amento',
+  'amenti',
+  'imento',
+  'imenti',
+  'atrice',
+  'atrici',
+  'atore',
+  'atori',
+  'ienza',
+  'ienze',
+  'enza',
+  'enze',
+  'anti',
+  'ante',
+  'enti',
+  'ente',
+  'abili',
+  'abile',
+  'ibili',
+  'ibile',
+  'issimi',
+  'issime',
+  'issimo',
+  'issima',
+  'ando',
+  'endo',
+  'iamo',
+  'are',
+  'ere',
+  'ire',
+  'ati',
+  'ate',
+  'ato',
+  'ata',
+  'uti',
+  'ute',
+  'uto',
+  'uta',
+  'iti',
+  'ite',
+  'ito',
+  'ita',
+  'oni',
+  'one',
+  'ie',
+  'ia',
+  'io',
+  'i',
+  'e',
+  'a',
+  'o',
+]
+
+function stemCandidates(token: string) {
+  const out = new Set<string>([token])
+  if (token.length >= 5 && /[aeiou]$/.test(token)) out.add(token.slice(0, -1))
+  for (const suffix of ITALIAN_SUFFIXES) {
+    if (!token.endsWith(suffix)) continue
+    const stem = token.slice(0, -suffix.length)
+    if (stem.length < 4) continue
+    out.add(stem)
+    if (stem.length >= 5 && /[aeiou]$/.test(stem)) out.add(stem.slice(0, -1))
+    break
+  }
+  return out
+}
+
+function stemsCompatible(a: string, b: string) {
+  if (a === b) return a.length >= 4
+  const shorter = a.length <= b.length ? a : b
+  const longer = a.length <= b.length ? b : a
+  if (shorter.length < 4) return false
+  if (longer.startsWith(shorter)) return true
+  let shared = 0
+  const limit = Math.min(a.length, b.length)
+  while (shared < limit && a[shared] === b[shared]) shared += 1
+  return shared >= 4 && shared >= limit - 1
+}
+
+function tokenMatches(hayToken: string, needle: string) {
+  if (!hayToken || !needle) return false
+  if (hayToken.includes(needle)) return true
+  if (needle.length >= 4 && hayToken.length >= 4 && needle.includes(hayToken)) return true
+  if (needle.length >= 4 && hayToken.startsWith(needle)) return true
+  for (const left of stemCandidates(hayToken)) {
+    for (const right of stemCandidates(needle)) {
+      if (stemsCompatible(left, right)) return true
+    }
+  }
+  return false
+}
+
 function matches(haystack: string, query: string) {
   const text = normalizeQuery(haystack)
   const normalized = normalizeQuery(query)
   if (!normalized) return false
   if (text.includes(normalized)) return true
   const words = normalized.split(' ').filter(Boolean)
-  return words.length > 0 && words.every((word) => text.includes(word))
+  if (!words.length) return false
+  const hayTokens = text.split(' ').filter(Boolean)
+  return words.every(
+    (word) => text.includes(word) || hayTokens.some((token) => tokenMatches(token, word)),
+  )
 }
 
 function stripHtml(html: string) {
@@ -222,8 +325,9 @@ async function videoTracks(key: string) {
   return tracks
 }
 
-async function filterVideosByQuery(tracks: LibraryTrack[], query: string) {
-  if (!query) return tracks
+const VIDEO_SUBTITLE_PAGE = 48
+
+function partitionVideoQuery(tracks: LibraryTrack[], query: string) {
   const titleHits: LibraryTrack[] = []
   const maybeSub: LibraryTrack[] = []
   for (const track of tracks) {
@@ -237,18 +341,51 @@ async function filterVideosByQuery(tracks: LibraryTrack[], query: string) {
       maybeSub.push(track)
     }
   }
-  // Cap subtitle fetches per request to stay within Edge time limits.
-  const slice = maybeSub.slice(0, 18)
+  return { titleHits, maybeSub }
+}
+
+async function scanSubtitleHits(tracks: LibraryTrack[], query: string) {
   const deep = await Promise.allSettled(
-    slice.map(async (track) => {
+    tracks.map(async (track) => {
       const hit = await subtitleMatches(track.subtitleUrl!, query)
       return hit ? ({ ...track, matchIn: 'Nei sottotitoli' } satisfies LibraryTrack) : null
     }),
   )
-  const subHits = deep.flatMap((result) =>
+  return deep.flatMap((result) =>
     result.status === 'fulfilled' && result.value ? [result.value] : [],
   )
-  return [...titleHits, ...subHits]
+}
+
+async function filterVideosByQuery(
+  tracks: LibraryTrack[],
+  query: string,
+  subtitlePage = 0,
+) {
+  if (!query) return { tracks, nextSubtitlePage: null as number | null }
+  const { titleHits, maybeSub } = partitionVideoQuery(tracks, query)
+  const start = Math.max(0, subtitlePage) * VIDEO_SUBTITLE_PAGE
+  const slice = maybeSub.slice(start, start + VIDEO_SUBTITLE_PAGE)
+  const subHits = await scanSubtitleHits(slice, query)
+  const nextSubtitlePage =
+    start + slice.length < maybeSub.length ? subtitlePage + 1 : null
+  return {
+    tracks: subtitlePage === 0 ? [...titleHits, ...subHits] : subHits,
+    nextSubtitlePage,
+  }
+}
+
+async function allVideoTracks() {
+  const root = await category('VideoOnDemand')
+  const categories = root.subcategories ?? []
+  const results = await Promise.allSettled(categories.map((item) => videoTracks(item.key)))
+  const tracks = [
+    ...new Map(
+      results
+        .flatMap((result) => (result.status === 'fulfilled' ? result.value : []))
+        .map((track) => [track.id, track]),
+    ).values(),
+  ]
+  return tracks
 }
 
 async function fetchArticleAudio(docid: string) {
@@ -512,35 +649,35 @@ export default async function handler(request: Request) {
     'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=86400',
   }
   try {
-    if ((kind === 'articles' || kind === 'videos') && query && !topic) {
-      const topics =
-        kind === 'articles'
-          ? await articleTopics()
-          : ((await category('VideoOnDemand')).subcategories?.map(({ key, name }) => ({
-              id: key,
-              name,
-            })) ?? [])
+    if (kind === 'videos' && query && !topic) {
+      // Search every VOD category for titles in one pass, then page through subtitles.
+      const catalog = await allVideoTracks()
+      const filtered = await filterVideosByQuery(catalog, query, offset)
+      return Response.json(
+        {
+          tracks: filtered.tracks,
+          pending: [],
+          failed: 0,
+          next: filtered.nextSubtitlePage,
+        },
+        { headers },
+      )
+    }
+    if (kind === 'articles' && query && !topic) {
+      const topics = await articleTopics()
       // Larger batches so title search reaches HTML catalogs (e.g. Cybercrime) in one hop.
-      const batchSize = kind === 'articles' ? 8 : 4
+      const batchSize = 8
       const group = Math.floor(offset / 1024) * batchSize
       const page = offset % 1024
       const batch = topics.slice(group, group + batchSize)
       const results = await Promise.allSettled(
         batch.map(async ({ id, name }) => {
-          if (kind === 'articles') {
-            if (id.startsWith('pub:')) {
-              const result = await pubTracks(id.slice(4), query, page * 24, name)
-              return { ...result, more: result.next !== null }
-            }
-            const result = await articleTracks(id, page * 12, query, name)
+          if (id.startsWith('pub:')) {
+            const result = await pubTracks(id.slice(4), query, page * 24, name)
             return { ...result, more: result.next !== null }
           }
-          return {
-            tracks: await filterVideosByQuery(await videoTracks(id), query),
-            pending: [] as PendingItem[],
-            failed: 0,
-            more: false,
-          }
+          const result = await articleTracks(id, page * 12, query, name)
+          return { ...result, more: result.next !== null }
         }),
       )
       const available = results.flatMap((result) =>
@@ -609,13 +746,18 @@ export default async function handler(request: Request) {
         )
       }
       if (!/^VOD[A-Za-z]+$/.test(topic)) return new Response(null, { status: 400 })
+      if (!query) {
+        return Response.json(
+          { tracks: await videoTracks(topic), pending: [], next: null },
+          { headers },
+        )
+      }
+      const filtered = await filterVideosByQuery(await videoTracks(topic), query, offset)
       return Response.json(
         {
-          tracks: query
-            ? await filterVideosByQuery(await videoTracks(topic), query)
-            : await videoTracks(topic),
+          tracks: filtered.tracks,
           pending: [],
-          next: null,
+          next: filtered.nextSubtitlePage,
         },
         { headers },
       )
