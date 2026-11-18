@@ -1,3 +1,4 @@
+import { forgetVoiceSample, hasVoiceSample, saveVoiceSample } from './personalVoice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearBookmark,
@@ -49,7 +50,11 @@ export function ArticleNarration({
   const [startWord, setStartWord] = useState(0)
   const [endSentence, setEndSentence] = useState<number | null>(null)
   const [endWord, setEndWord] = useState<number | null>(null)
-  const [voice, setVoice] = useState<NarrationVoiceId>('isabella')
+  const [voice, setVoice] = useState<NarrationVoiceId>(() => {
+    try { return NARRATION_VOICES.find(v => v.id === localStorage.getItem('jw-narrator'))?.id ?? 'isabella' } catch { return 'isabella' }
+  })
+  const [sampleReady, setSampleReady] = useState(hasVoiceSample)
+  const [sampleError, setSampleError] = useState('')
   const [rate, setRate] = useState<NarrationRate>('-8%')
   const [status, setStatus] = useState<SpeechStatus>('idle')
   const [detail, setDetail] = useState('')
@@ -262,6 +267,10 @@ export function ArticleNarration({
 
   async function startPlayback(fromBookmark = false) {
     if (!sentences.length || status === 'loading') return
+    if (voice === 'personal' && !sampleReady) {
+      setSampleError('Scegli prima il memo con la tua voce.')
+      return
+    }
     primeNarrationAudio()
     speechRef.current?.stop()
     audioChunksRef.current = []
@@ -336,7 +345,6 @@ export function ArticleNarration({
       return
     }
     if (status === 'paused' || status === 'error') {
-      primeNarrationAudio()
       if (status === 'error') {
         void startPlayback(true)
         return
@@ -390,11 +398,12 @@ export function ArticleNarration({
       setShareNote('Ascolta almeno una frase, poi scarica.')
       return
     }
-    const blob = new Blob(chunks, { type: 'audio/mpeg' })
+    const personal = chunks[0].type.includes('wav')
+    const blob = personal ? chunks[chunks.length - 1] : new Blob(chunks, { type: 'audio/mpeg' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${(article?.title || title || 'articolo').slice(0, 60)}.mp3`
+    a.download = `${(article?.title || title || 'articolo').slice(0, 60)}.${personal ? 'wav' : 'mp3'}`
     a.click()
     URL.revokeObjectURL(url)
     setShareNote('Download avviato')
@@ -473,7 +482,13 @@ export function ArticleNarration({
               Voce
               <select
                 value={voice}
-                onChange={(e) => setVoice(e.target.value as NarrationVoiceId)}
+                onChange={(e) => {
+                  audioChunksRef.current = []
+                  speechRef.current?.stop()
+                  const next = e.target.value as NarrationVoiceId
+                  setVoice(next)
+                  try { localStorage.setItem('jw-narrator', next) } catch { /* session only */ }
+                }}
                 disabled={status === 'loading' || status === 'speaking'}
               >
                 {NARRATION_VOICES.map((v) => (
@@ -483,6 +498,23 @@ export function ArticleNarration({
                 ))}
               </select>
             </label>
+            {voice === 'personal' && <fieldset disabled={status === 'loading' || status === 'speaking' || status === 'paused'}>
+              <legend>Il tuo memo vocale</legend>
+              <p>Premendo Ascolta, il memo e il testo selezionato vengono inviati alla demo pubblica Chatterbox. La demo può avere code o limiti di utilizzo.</p>
+              <label>{sampleReady ? 'Sostituisci memo' : 'Scegli un memo da File'}
+                <input type="file" accept="audio/*,.m4a,.wav,.mp3" onChange={async e => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  e.target.value = ''
+                  try { await saveVoiceSample(file); setSampleReady(true); setSampleError('') }
+                  catch (err) { setSampleError(err instanceof Error ? err.message : 'Salvataggio non riuscito.') }
+                }} />
+              </label>
+              {sampleReady && <button type="button" className="btn ghost" onClick={() => {
+                forgetVoiceSample(); setSampleReady(false)
+              }}>Rimuovi memo dal dispositivo</button>}
+              {sampleError && <p role="alert">{sampleError}</p>}
+            </fieldset>}
             <label>
               Velocità
               <select
@@ -548,11 +580,12 @@ export function ArticleNarration({
                 {status === 'loading' ? 'Preparazione…' : 'Ascolta il brano selezionato'}
               </button>
             )}
+            {status === 'loading' && <button type="button" className="btn ghost" onClick={stopPlayback}>Annulla</button>}
             <button type="button" className="btn ghost small" onClick={() => void shareRange()}>
               Condividi brano
             </button>
             <button type="button" className="btn ghost small" onClick={downloadAudio}>
-              Scarica audio
+              {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica audio'}
             </button>
           </div>
 
@@ -571,6 +604,17 @@ export function ArticleNarration({
               {detail}
             </p>
           )}
+
+          {status === 'error' && voice === 'personal' && <div className="narration-controls">
+            <button className="btn ghost" type="button" onClick={async () => {
+              const selection = sliceRange(sentences, startSentence, startWord, endSentence, endWord)
+              try {
+                await navigator.clipboard.writeText(selection.texts[0]?.slice(0, 300) || '')
+                setShareNote('Primo estratto copiato per la demo.')
+              } catch { setShareNote('Puoi selezionare e copiare il testo qui sotto.') }
+            }}>Copia estratto per la demo</button>
+            <a className="btn ghost" href="https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS" target="_blank" rel="noreferrer">Apri demo Chatterbox</a>
+          </div>}
 
           <article className="article-body">
             {sentences.map((sentence) => {

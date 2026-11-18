@@ -583,7 +583,7 @@ export default function App() {
                   kind: 'article' as const,
                   updatedAt: articleBookmarks[0].updatedAt || 0,
                   title: articleBookmarks[0].title,
-                  meta: `Isabella · «${articleBookmarks[0].snippet}»`,
+                  meta: `Lettura · «${articleBookmarks[0].snippet}»`,
                   run: () => {
                     setResumeReader({
                       id: articleBookmarks[0].articleId,
