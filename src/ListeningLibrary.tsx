@@ -392,7 +392,7 @@ export function ListeningLibrary({
                     })
                   }
                 >
-                  Isabella · testo
+                  Lettura del testo
                 </button>
               )}
               {kind === 'videos' && track.subtitleUrl && (
@@ -440,7 +440,7 @@ export function ListeningLibrary({
                       className="btn primary small"
                       onClick={() => openReader(item)}
                     >
-                      {saved ? 'Riprendi con Isabella' : 'Apri testo · Isabella'}
+                      {saved ? 'Riprendi lettura' : 'Apri testo e ascolta'}
                     </button>
                     <a href={item.source} target="_blank" rel="noreferrer">
                       Apri su JW.org ↗

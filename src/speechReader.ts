@@ -1,3 +1,5 @@
+import { personalRenderer } from './personalVoice'
+import { chunkForTts } from './articleText'
 import { onPauseNarration, requestPauseMusic } from './audioBus'
 
 /** Voce narrativa neurale cloud — non quella del dispositivo. */
@@ -9,11 +11,12 @@ export type SpeechStatus =
   | 'paused'
   | 'error'
   | 'completed'
-export type NarrationVoiceId = 'isabella' | 'elsa' | 'diego' | 'giuseppe'
+export type NarrationVoiceId = 'isabella' | 'elsa' | 'diego' | 'giuseppe' | 'personal'
 export type NarrationRate = '-15%' | '-8%' | '+0%' | '+10%'
 
 export const NARRATION_VOICES: Array<{ id: NarrationVoiceId; label: string }> = [
   { id: 'isabella', label: 'Isabella (narrativa)' },
+  { id: 'personal', label: 'La mia voce (Chatterbox)' },
   { id: 'elsa', label: 'Elsa (chiara)' },
   { id: 'diego', label: 'Diego (maschile)' },
   { id: 'giuseppe', label: 'Giuseppe (multilingue)' },
@@ -164,12 +167,17 @@ export async function speakSentences(
     onChunkReady,
   } = opts
 
-  const queue = texts
-    .map((text, i) => ({
-      text: text.replace(/\s+/g, ' ').trim(),
-      sentenceIndex: sentenceIndexes[i] ?? i,
-    }))
-    .filter((item) => item.text)
+  const controller = new AbortController()
+  const render = voice === 'personal' ? personalRenderer(controller.signal)
+    : (text: string) => fetchNeuralChunk(text, voice, rate)
+  const queue = texts.flatMap((text, i) => {
+    let offset = i === 0 ? firstWordOffset : 0
+    return chunkForTts(text, voice === 'personal' ? 300 : 1800).map(piece => {
+      const item = { text: piece, sentenceIndex: sentenceIndexes[i] ?? i, offset }
+      offset += countWords(piece)
+      return item
+    })
+  })
 
   if (!queue.length) {
     onStatus?.('error', 'Testo vuoto.')
@@ -281,6 +289,7 @@ export async function speakSentences(
       audioEl.onerror = () => done('error')
       audioEl.muted = false
       audioEl.src = url
+      audioEl.playbackRate = voice === 'personal' ? 1 + parseInt(rate) / 100 : 1
 
       void audioEl.play().then(
         () => {
@@ -298,28 +307,29 @@ export async function speakSentences(
 
   const run = async () => {
     try {
-      let prefetch: Promise<Blob> | null = fetchNeuralChunk(queue[0].text, voice, rate)
+      let prefetch: Promise<Blob> | null = render(queue[0].text)
 
       for (let i = 0; i < queue.length; i += 1) {
         if (aborted) return
         playIndex = i
-        currentWord = i === 0 ? firstWordOffset : 0
+        currentWord = queue[i].offset
         emitProgress()
 
-        const blob = await (prefetch ?? fetchNeuralChunk(queue[i].text, voice, rate))
+        const blob = await (prefetch ?? render(queue[i].text))
         prefetch = null
         if (aborted) return
         onChunkReady?.(blob, i)
 
         if (i + 1 < queue.length) {
-          prefetch = fetchNeuralChunk(queue[i + 1].text, voice, rate)
+          prefetch = render(queue[i + 1].text)
+          void prefetch.catch(() => {})
         }
 
         await waitIfPaused()
         if (aborted) return
 
         const wordsInClip = countWords(queue[i].text) || 1
-        const wordBase = i === 0 ? firstWordOffset : 0
+        const wordBase = queue[i].offset
         const result = await playBlob(blob, wordsInClip, wordBase)
         if (aborted) return
         if (result === 'error') {
@@ -349,6 +359,7 @@ export async function speakSentences(
 
   const handle: SpeakHandle = {
     stop(opts) {
+      controller.abort()
       aborted = true
       finished = true
       if (activeNarrationPause === handle.pause) activeNarrationPause = null
