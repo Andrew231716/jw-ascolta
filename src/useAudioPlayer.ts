@@ -37,6 +37,9 @@ export function useAudioPlayer() {
     audio.setAttribute('playsinline', 'true')
     audio.setAttribute('webkit-playsinline', 'true')
     ;(audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true
+    // Keep element in the DOM so iOS/Android are less likely to suspend background audio.
+    audio.style.display = 'none'
+    document.body.appendChild(audio)
     audioRef.current = audio
 
     const onTime = () =>
@@ -90,6 +93,11 @@ export function useAudioPlayer() {
       audio.removeEventListener('waiting', onWaiting)
       audio.removeEventListener('canplay', onCanPlay)
       audio.removeEventListener('error', onError)
+      try {
+        audio.remove()
+      } catch {
+        /* ignore */
+      }
       audioRef.current = null
     }
   }, [])
@@ -252,7 +260,7 @@ export function useAudioPlayer() {
     }
   }, [])
 
-  // Reduce iOS suspending the tab while audio should continue (CarPlay/Bluetooth).
+  // Keep playback alive when the app goes to background (lock screen / other apps).
   useEffect(() => {
     let wake: WakeLockSentinel | null = null
     const request = async () => {
@@ -269,12 +277,23 @@ export function useAudioPlayer() {
       void wake?.release()
       wake = null
     }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && audioRef.current && !audioRef.current.paused) {
+        void request()
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'playing'
+        }
+      }
+    }
+    // Do not pause on hide — let Media Session / OS continue audio.
     const audio = audioRef.current
     audio?.addEventListener('play', onPlay)
     audio?.addEventListener('pause', onPause)
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       audio?.removeEventListener('play', onPlay)
       audio?.removeEventListener('pause', onPause)
+      document.removeEventListener('visibilitychange', onVisible)
       void wake?.release()
     }
   }, [])

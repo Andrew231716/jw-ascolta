@@ -5,8 +5,19 @@ import { formatDuration, normalizeTitle, type Track } from './catalog'
 
 type Kind = 'articles' | 'videos'
 type Topic = { id: string; name: string }
-type Entry = Track & { source: string; topics: string[]; description?: string }
-type Pending = { id: string; title: string; source: string; reason: string }
+type Entry = Track & {
+  source: string
+  topics: string[]
+  description?: string
+  matchIn?: string
+}
+type Pending = {
+  id: string
+  title: string
+  source: string
+  reason: string
+  matchIn?: string
+}
 type Page = {
   tracks: Entry[]
   pending?: Pending[]
@@ -246,10 +257,19 @@ export function ListeningLibrary({
         setSubmitted(title)
         setRetry((value) => value + 1)
       }}>
-        <input type="search" aria-label="Cerca per titolo" placeholder="es. Cybercrime, Torre di Guardia…"
-          maxLength={120} value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input
+          type="search"
+          aria-label="Cerca parola o frase"
+          placeholder="Parola o frase nel titolo, testo o sottotitoli…"
+          maxLength={120}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
         <button className="btn primary" disabled={!query.trim() && !topic}>Cerca</button>
       </form>
+      <p className="section-lede">
+        La ricerca guarda titoli, testo degli articoli e sottotitoli dei video.
+      </p>
       <label>Categoria JW.org (facoltativa)
         <select value={topic} onChange={(event) => selectTopic(event.target.value)}>
           <option value="">Tutte le categorie</option>
@@ -291,7 +311,12 @@ export function ListeningLibrary({
           <li className="listening-result" key={track.id}>
             <button className="queue-item" onClick={() => onPlay(visible, index)}>
               <span className="q-title">{track.title}</span>
-              <span className="q-meta">{kind === 'articles' ? 'Articolo audio' : 'Audio del video'} · {formatDuration(track.duration)} · {tags(track).join(' · ')}</span>
+              <span className="q-meta">
+              {kind === 'articles' ? 'Articolo audio' : 'Audio del video'}
+              {track.matchIn ? ` · ${track.matchIn}` : ''}
+              {' · '}
+              {formatDuration(track.duration)} · {tags(track).join(' · ')}
+            </span>
             </button>
             <a href={track.source} target="_blank" rel="noreferrer" aria-label={`Apri ${track.title} su JW.org`}>JW.org ↗</a>
             <div className="result-actions">
@@ -336,6 +361,7 @@ export function ListeningLibrary({
                     <span className="q-title">{item.title}</span>
                     <span className="q-meta">
                       Nessun audio JW.org · {item.reason}
+                      {item.matchIn ? ` · ${item.matchIn}` : ''}
                       {saved ? ` · riprendi: «${saved.snippet}»` : ''}
                     </span>
                   </div>

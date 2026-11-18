@@ -1,4 +1,4 @@
-export const config = { runtime: 'edge' }
+export const config = { runtime: 'edge', maxDuration: 60 }
 
 const site = 'https://www.jw.org'
 const cdn = 'https://b.jw-cdn.org'
@@ -13,6 +13,8 @@ type LibraryTrack = {
   topics: string[]
   description?: string
   source: string
+  matchIn?: string
+  subtitleUrl?: string
 }
 
 type PendingItem = {
@@ -20,6 +22,7 @@ type PendingItem = {
   title: string
   source: string
   reason: string
+  matchIn?: string
 }
 
 async function read(url: string) {
@@ -48,17 +51,76 @@ function links(html: string) {
   )
 }
 
-function matches(title: string, query: string) {
-  const normalize = (value: string) =>
-    value
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/\p{M}/gu, '')
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
-      .trim()
-  const text = normalize(title)
-  const words = normalize(query).split(' ').filter(Boolean)
+function normalizeQuery(value: string) {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+}
+
+function matches(haystack: string, query: string) {
+  const text = normalizeQuery(haystack)
+  const normalized = normalizeQuery(query)
+  if (!normalized) return false
+  if (text.includes(normalized)) return true
+  const words = normalized.split(' ').filter(Boolean)
   return words.length > 0 && words.every((word) => text.includes(word))
+}
+
+function stripHtml(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<sup[\s\S]*?<\/sup>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&(?:amp|quot|nbsp|apos|#\d+);/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function articleBodyMatches(path: string, query: string): Promise<boolean> {
+  try {
+    const response = await fetch(site + path, {
+      signal: AbortSignal.timeout(6000),
+      headers: { 'Accept-Language': 'it' },
+    })
+    if (!response.ok) return false
+    const html = await response.text()
+    const bodyMatch = html.match(
+      /<div class="bodyTxt">([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/i,
+    )
+    const body = bodyMatch
+      ? stripHtml(bodyMatch[1])
+      : Array.from(html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi), (m) => stripHtml(m[1]))
+          .filter((p) => p.length > 40)
+          .join(' ')
+    return matches(body, query)
+  } catch {
+    return false
+  }
+}
+
+function vttToText(vtt: string) {
+  return vtt
+    .replace(/^\uFEFF?WEBVTT[^\n]*\n?/i, '')
+    .replace(/\d{2}:\d{2}:\d{2}[.,]\d{3}\s*-->\s*[^\n]+/g, ' ')
+    .replace(/^\d+\s*$/gm, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+async function subtitleMatches(url: string, query: string): Promise<boolean> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
+    if (!response.ok) return false
+    const text = vttToText(await response.text())
+    return matches(text, query)
+  } catch {
+    return false
+  }
 }
 
 async function articleTopics() {
@@ -134,6 +196,10 @@ async function videoTracks(key: string) {
       // Prefer lowest resolution for audio listening.
       const file = files.sort((a, b) => a.frameHeight - b.frameHeight)[0]
       if (!file) continue
+      const subtitleUrl =
+        file.subtitles?.url ||
+        files.map((f) => f.subtitles?.url).find(Boolean) ||
+        undefined
       seen.add(media.guid)
       tracks.push({
         id: 'video-' + media.guid,
@@ -142,6 +208,7 @@ async function videoTracks(key: string) {
         duration: media.duration,
         topics,
         description: media.description,
+        subtitleUrl,
         source:
           site +
           '/finder?lank=' +
@@ -153,6 +220,35 @@ async function videoTracks(key: string) {
   }
   collect(root, [])
   return tracks
+}
+
+async function filterVideosByQuery(tracks: LibraryTrack[], query: string) {
+  if (!query) return tracks
+  const titleHits: LibraryTrack[] = []
+  const maybeSub: LibraryTrack[] = []
+  for (const track of tracks) {
+    if (
+      matches(track.title, query) ||
+      matches(track.description || '', query) ||
+      track.topics.some((topic) => matches(topic, query))
+    ) {
+      titleHits.push({ ...track, matchIn: 'Nel titolo' })
+    } else if (track.subtitleUrl) {
+      maybeSub.push(track)
+    }
+  }
+  // Cap subtitle fetches per request to stay within Edge time limits.
+  const slice = maybeSub.slice(0, 18)
+  const deep = await Promise.allSettled(
+    slice.map(async (track) => {
+      const hit = await subtitleMatches(track.subtitleUrl!, query)
+      return hit ? ({ ...track, matchIn: 'Nei sottotitoli' } satisfies LibraryTrack) : null
+    }),
+  )
+  const subHits = deep.flatMap((result) =>
+    result.status === 'fulfilled' && result.value ? [result.value] : [],
+  )
+  return [...titleHits, ...subHits]
 }
 
 async function fetchArticleAudio(docid: string) {
@@ -186,7 +282,10 @@ async function fetchArticleAudio(docid: string) {
 
 async function articleTracks(path: string, offset: number, query = '', name = '') {
   const html = await (await read(site + path)).text()
-  const documentIds = new Map<string, { path: string; title: string }>()
+  const documentIds = new Map<
+    string,
+    { path: string; title: string; matchIn?: string }
+  >()
   const titlesByPath = new Map<string, string>()
   for (const link of links(html)) {
     if (link.name) titlesByPath.set(link.path, link.name)
@@ -203,13 +302,36 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
     }
   }
 
-  const candidates = [...documentIds].filter(([, meta]) => {
-    if (!query) return true
-    return (
-      (meta.title && matches(meta.title, query)) ||
-      matches(meta.path, query)
+  const all = [...documentIds]
+  let candidates: Array<[string, { path: string; title: string; matchIn?: string }]>
+  if (!query) {
+    candidates = all
+  } else {
+    const titleHits = all.filter(
+      ([, meta]) =>
+        (meta.title && matches(meta.title, query)) || matches(meta.path, query),
     )
-  })
+    for (const [, meta] of titleHits) meta.matchIn = 'Nel titolo'
+
+    // Deep search: scan article bodies that did not match by title.
+    const rest = all.filter(([id]) => !titleHits.some(([hitId]) => hitId === id))
+    const deepWindow = rest.slice(0, 12)
+    const deepHits = await Promise.allSettled(
+      deepWindow.map(async ([id, meta]) => {
+        const hit = await articleBodyMatches(meta.path, query)
+        return hit
+          ? ([id, { ...meta, matchIn: 'Nel testo' }] as [
+              string,
+              { path: string; title: string; matchIn?: string },
+            ])
+          : null
+      }),
+    )
+    const bodyHits = deepHits.flatMap((result) =>
+      result.status === 'fulfilled' && result.value ? [result.value] : [],
+    )
+    candidates = [...titleHits, ...bodyHits]
+  }
 
   const batch = candidates.slice(offset, offset + 12)
   const results = await Promise.allSettled(
@@ -222,6 +344,7 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
             title: meta.title || `Articolo ${id}`,
             source: site + meta.path,
             reason: 'Audio non ancora pubblicato su JW.org',
+            matchIn: meta.matchIn,
           } satisfies PendingItem,
           track: null as LibraryTrack | null,
         }
@@ -235,6 +358,7 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
           duration: file.duration,
           source: site + meta.path,
           topics: name ? [name] : [],
+          matchIn: meta.matchIn,
         } satisfies LibraryTrack,
       }
     }),
@@ -412,9 +536,7 @@ export default async function handler(request: Request) {
             return { ...result, more: result.next !== null }
           }
           return {
-            tracks: (await videoTracks(id)).filter((track) =>
-              matches(track.title, query),
-            ),
+            tracks: await filterVideosByQuery(await videoTracks(id), query),
             pending: [] as PendingItem[],
             failed: 0,
             more: false,
@@ -489,9 +611,9 @@ export default async function handler(request: Request) {
       if (!/^VOD[A-Za-z]+$/.test(topic)) return new Response(null, { status: 400 })
       return Response.json(
         {
-          tracks: (await videoTracks(topic)).filter(
-            (track) => !query || matches(track.title, query),
-          ),
+          tracks: query
+            ? await filterVideosByQuery(await videoTracks(topic), query)
+            : await videoTracks(topic),
           pending: [],
           next: null,
         },

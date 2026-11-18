@@ -3,6 +3,10 @@
     "api/tts.js": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "api/listening.ts": {
+      "maxDuration": 60,
+      "memory": 1024
     }
   },
   "rewrites": [

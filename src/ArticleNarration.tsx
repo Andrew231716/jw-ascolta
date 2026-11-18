@@ -176,25 +176,24 @@ export function ArticleNarration({
   }
 
   useEffect(() => {
-    const onHide = () => {
+    // Keep Isabella playing in background; only snapshot progress.
+    const persistOnly = () => {
       const handle = speechRef.current
       if (!handle) return
-      handle.pause()
       persistFromProgress(handle.getProgress())
     }
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') onHide()
+      if (document.visibilityState === 'hidden') persistOnly()
     }
-    window.addEventListener('pagehide', onHide)
+    window.addEventListener('pagehide', persistOnly)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
-      window.removeEventListener('pagehide', onHide)
+      window.removeEventListener('pagehide', persistOnly)
       document.removeEventListener('visibilitychange', onVisibility)
       const handle = speechRef.current
       if (handle) {
-        handle.pause()
         persistFromProgress(handle.getProgress())
-        // Stop audio without clearing the bookmark (idle ≠ completed).
+        // Closing the reader stops audio; backgrounding does not.
         handle.stop()
       }
       speechRef.current = null

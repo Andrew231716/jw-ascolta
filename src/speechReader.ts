@@ -50,6 +50,12 @@ function ensureAudioElement(): HTMLAudioElement {
   el.setAttribute('playsinline', 'true')
   el.setAttribute('webkit-playsinline', 'true')
   ;(el as HTMLAudioElement & { playsInline?: boolean }).playsInline = true
+  el.style.display = 'none'
+  try {
+    document.body.appendChild(el)
+  } catch {
+    /* ignore SSR / early */
+  }
   primedAudio = el
   return el
 }
