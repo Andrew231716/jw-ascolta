@@ -35,6 +35,8 @@ export interface Track {
   clipStart?: number
   clipEnd?: number
   subtitleUrl?: string
+  source?: string
+  contentKind?: 'music' | 'article' | 'video'
 }
 
 export const SECTIONS: SectionDef[] = [
@@ -180,7 +182,7 @@ export async function fetchSectionTracks(
   }
 
   const url = `${API}/categories/${LANG}/${section.apiKey}?detailed=1&clientType=www`
-  const res = await fetch(url)
+  const res = await fetch(url, { signal: AbortSignal.timeout(20000) })
   if (!res.ok) {
     throw new Error(`Impossibile caricare ${section.name} (${res.status})`)
   }

@@ -170,9 +170,21 @@ export default async function handler(request: Request): Promise<Response> {
       return Response.json({ error: 'empty' }, { status: 404 })
     }
 
+    let audio: { url: string; duration: number } | undefined
+    const pageDocid = html.match(/data-page-id=["']mid(\d+)/i)?.[1]
+    if (searchParams.get('audio') === '1' && pageDocid) {
+      try {
+        const params = new URLSearchParams({ docid: pageDocid, output: 'json', fileformat: 'MP3', alllangs: '0', langwritten: 'I', txtCMSLang: 'I' })
+        const response = await fetch('https://b.jw-cdn.org/apis/pub-media/GETPUBMEDIALINKS?' + params, { signal: AbortSignal.timeout(8000) })
+        const data = response.ok ? await response.json() : {}
+        const file = data.files?.I?.MP3?.find((item: { mimetype: string; file?: { url: string } }) => item.mimetype === 'audio/mpeg' && item.file?.url?.startsWith('https://'))
+        if (file) audio = { url: file.file.url, duration: Number(file.duration || 0) }
+      } catch { /* Text remains readable if audio verification is unavailable. */ }
+    }
     return Response.json(
       {
         title,
+        audio,
         text: body,
         paragraphs,
         source: site + path,

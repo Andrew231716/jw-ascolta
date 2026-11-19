@@ -974,6 +974,22 @@ export default async function handler(request: Request) {
     'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=86400',
   }
   try {
+    const link = searchParams.get('link')
+    if (link) {
+      const parsed = new URL(link)
+      if (parsed.protocol !== 'https:' || !['www.jw.org', 'jw.org'].includes(parsed.hostname)) return Response.json({ error: 'Usa un collegamento HTTPS di JW.org.' }, { status: 400 })
+      const naturalKey = parsed.searchParams.get('lank') || parsed.hash.split('/').filter(Boolean).at(-1) || ''
+      if (naturalKey && /^[\w-]+$/.test(naturalKey)) {
+        const tracks = await allVideoTracks()
+        const track = tracks.find(item => new URL(item.source).searchParams.get('lank') === naturalKey)
+        if (track) return Response.json({ track }, { headers })
+      }
+      return Response.json({ article: parsed.href }, { headers })
+    }
+    if (searchParams.get('latest') === '1') {
+      const result = await articleTracks('/it/biblioteca-digitale/novita/', offset, '', 'Novità JW.org')
+      return Response.json(result, result.failed ? {} : { headers })
+    }
     if (browse && (kind === 'articles' || kind === 'videos') && !topic && !query) {
       return Response.json(await browseSections(kind), { headers })
     }

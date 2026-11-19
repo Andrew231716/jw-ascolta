@@ -1,3 +1,6 @@
+import { DownloadButton } from './DownloadButton'
+import { localResponse, listeningProgress, PROGRESS_CHANGED } from './offlineLibrary.ts'
+import { LISTENING_THEMES, titleThemes, timedPlaylist } from './listeningThemes.ts'
 import { useEffect, useRef, useState } from 'react'
 import { ArticleNarration } from './ArticleNarration'
 import {
@@ -68,13 +71,15 @@ function canOpenText(entry: Entry) {
 async function api<T>(
   kind: Kind,
   signal: AbortSignal,
-  opts: { topic?: string; offset?: number; query?: string; browse?: boolean } = {},
+  opts: { topic?: string; offset?: number; query?: string; browse?: boolean; latest?: boolean; refresh?: string } = {},
 ): Promise<T> {
   const params = new URLSearchParams({ kind, offset: String(opts.offset ?? 0) })
   if (opts.topic) params.set('topic', opts.topic)
   if (opts.query) params.set('q', opts.query)
   if (opts.browse) params.set('browse', '1')
-  const response = await fetch('/api/listening?' + params, { signal })
+  if (opts.latest) params.set('latest', '1')
+  if (opts.refresh) params.set('refresh', opts.refresh)
+  const response = await localResponse('/api/listening?' + params, signal)
   if (!response.ok) throw new Error('Catalogo non disponibile. Riprova tra poco.')
   return response.json()
 }
@@ -108,6 +113,15 @@ export function ListeningLibrary({
   initialKind?: Kind
   initialSearch?: string
 }) {
+  const [link, setLink] = useState('')
+  const [linkBusy, setLinkBusy] = useState(false)
+  const [maxMinutes, setMaxMinutes] = useState(0)
+  const [stateFilter, setStateFilter] = useState('all')
+  const [audioOnly, setAudioOnly] = useState(false)
+  const [themeFilter, setThemeFilter] = useState('')
+  const [, setProgressTick] = useState(0)
+  const [catalogVersion, setCatalogVersion] = useState('')
+  const [latest, setLatest] = useState(false)
   const [kind, setKind] = useState<Kind>(initialKind)
   const [sections, setSections] = useState<BrowseSection[]>([])
   const [sectionId, setSectionId] = useState('')
@@ -130,11 +144,43 @@ export function ListeningLibrary({
   const [bookmarks, setBookmarks] = useState<NarrationBookmark[]>(() => listBookmarks())
   const [bookmarkTick, setBookmarkTick] = useState(0)
 
-  const browsing = !submitted
+  const linkController = useRef<AbortController | null>(null)
+  useEffect(() => () => linkController.current?.abort(), [])
+  useEffect(() => {
+    const refresh = () => setProgressTick(value => value + 1)
+    window.addEventListener(PROGRESS_CHANGED, refresh)
+    return () => window.removeEventListener(PROGRESS_CHANGED, refresh)
+  }, [])
+  const readingStates = listeningProgress()
+  async function openLink() {
+    linkController.current?.abort()
+    const controller = new AbortController()
+    linkController.current = controller
+    try {
+      const url = new URL(link.trim())
+      if (url.protocol !== 'https:' || !['www.jw.org', 'jw.org'].includes(url.hostname)) throw new Error('Incolla un collegamento HTTPS di JW.org.')
+      setLinkBusy(true)
+      setError('')
+      const data = await (await localResponse('/api/listening?' + new URLSearchParams({ link: url.href }), controller.signal)).json()
+      if (data.track) {
+        const track = { ...data.track, sectionSlug: 'tutto', sectionName: 'Video' }
+        if (track.subtitleUrl) setVideoReader(track)
+        else onPlay([track])
+      } else {
+        const article = await (await localResponse('/api/article-text?' + new URLSearchParams({ url: data.article, audio: '1' }), controller.signal)).json()
+        if (!article.text?.trim()) throw new Error('Nessun testo leggibile a questo collegamento.')
+        setReader({ id: article.source, title: article.title, source: article.source, audioUrl: article.audio?.url, audioDuration: article.audio?.duration })
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Impossibile aprire il link.')
+    } finally { if (!controller.signal.aborted) setLinkBusy(false) }
+  }
+
+  const browsing = !submitted && !latest
   const activeSection = sections.find((item) => item.id === sectionId) ?? null
   const atHome = browsing && !sectionId && !topic
   const atSection = browsing && Boolean(sectionId) && !topic
-  const atTopic = Boolean(topic) || Boolean(submitted)
+  const atTopic = Boolean(topic) || Boolean(submitted) || latest
 
   useEffect(() => {
     if (initialReader) setReader(initialReader)
@@ -147,6 +193,7 @@ export function ListeningLibrary({
     if (!nextQuery || nextQuery === lastExternalSearch.current) return
     lastExternalSearch.current = nextQuery
     setKind(initialKind)
+    setLatest(false)
     setQuery(nextQuery)
     setSectionId('')
     setTopic('')
@@ -178,7 +225,7 @@ export function ListeningLibrary({
     if (!active) return
     const controller = new AbortController()
     setLoadingBrowse(true)
-    api<{ sections: BrowseSection[] }>(kind, controller.signal, { browse: true })
+    api<{ sections: BrowseSection[] }>(kind, controller.signal, { browse: true, refresh: catalogVersion })
       .then((data) => {
         const nextSections = data.sections ?? []
         setSections(nextSections)
@@ -195,13 +242,15 @@ export function ListeningLibrary({
         }
       })
     return () => controller.abort()
-  }, [active, kind])
+  }, [active, kind, retry, catalogVersion])
 
   useEffect(() => {
-    if (!topic && !submitted) return
+    if (!active || (!topic && !submitted && !latest)) return
     const controller = new AbortController()
     api<Page>(kind, controller.signal, {
       topic: topic || undefined,
+      latest,
+      refresh: catalogVersion,
       offset,
       query: submitted || undefined,
     })
@@ -210,6 +259,7 @@ export function ListeningLibrary({
         const entries = data.tracks.map(
           (track): Entry => ({
             ...track,
+            contentKind: kind === 'videos' ? 'video' : 'article',
             sectionSlug: 'tutto',
             sectionName: track.topics.at(-1) ?? topicName,
           }),
@@ -250,9 +300,12 @@ export function ListeningLibrary({
         }
       })
     return () => controller.abort()
-  }, [kind, topic, offset, retry, submitted, topicName])
+  }, [active, kind, topic, offset, retry, submitted, topicName, latest, catalogVersion])
 
   function resetList() {
+    setMaxMinutes(0)
+    setStateFilter('all')
+    setThemeFilter('')
     setTracks([])
     setPending([])
     setOffset(0)
@@ -262,6 +315,7 @@ export function ListeningLibrary({
   }
 
   function goHome() {
+    setLatest(false)
     setSectionId('')
     setTopic('')
     setTopicName('')
@@ -273,6 +327,7 @@ export function ListeningLibrary({
   }
 
   function openSection(id: string) {
+    setLatest(false)
     setSectionId(id)
     setTopic('')
     setTopicName('')
@@ -284,6 +339,7 @@ export function ListeningLibrary({
   }
 
   function openItem(item: BrowseItem) {
+    setLatest(false)
     setTopic(item.id)
     setTopicName(item.name)
     setTopicKind(item.kind)
@@ -298,7 +354,10 @@ export function ListeningLibrary({
   }
 
   const visible = tracks.filter(
-    (track) => !official || track.topics.includes(official),
+    (track) => (!official || track.topics.includes(official)) &&
+      (!maxMinutes || (track.duration > 0 && track.duration <= maxMinutes * 60)) &&
+      (stateFilter === 'all' || (readingStates[track.id]?.state || 'new') === stateFilter) &&
+      (!themeFilter || titleThemes(track.title + ' ' + track.topics.join(' ')).includes(themeFilter)),
   )
   const officialOptions = [...new Set(tracks.flatMap((track) => track.topics.slice(1)))].sort()
 
@@ -361,6 +420,28 @@ export function ListeningLibrary({
   return (
     <section className="chooser listening-library">
       <h2>Ascolta</h2>
+      <details className="link-import"><summary>Apri un link JW.org</summary>
+        <form className="title-row" onSubmit={event => { event.preventDefault(); void openLink() }}>
+          <input type="url" aria-label="Collegamento JW.org" placeholder="https://www.jw.org/…" value={link} onChange={event => setLink(event.target.value)} required />
+          <button className="btn primary small" disabled={linkBusy}>{linkBusy ? 'Apertura…' : 'Apri'}</button>
+          {linkBusy && <button type="button" className="btn ghost small" onClick={() => { linkController.current?.abort(); setLinkBusy(false) }}>Annulla</button>}
+        </form>
+      </details>
+      <div className="discovery-actions">
+        <button type="button" className="btn ghost small" onClick={() => { resetList(); setTopic(''); setTopicName('Novità JW.org'); setSubmitted(''); setLatest(true); setLoading(true); setRetry(value => value + 1) }}>Novità JW.org</button>
+        <button type="button" className="btn ghost small" onClick={() => { setError(''); setLoadingBrowse(true); setCatalogVersion(String(Date.now())); setRetry(value => value + 1); resetList() }}>Aggiorna catalogo</button>
+      </div>
+      {atHome && <details><summary>Percorsi di ascolto per argomento</summary>
+        <p>Scegli un tema, poi la durata tra i risultati. I suggerimenti si basano su titoli e argomenti.</p>
+        <div className="result-actions">{LISTENING_THEMES.map(theme => <button type="button" className="chip" key={theme.name} onClick={() => { resetList(); setTopic(''); setLatest(false); setSubmitted(theme.query); setQuery(theme.query); setLoading(true) }}>{theme.name}</button>)}</div>
+      </details>}
+      {atTopic && <div className="listening-filters">
+        <label>Durata <select value={maxMinutes} onChange={event => setMaxMinutes(Number(event.target.value))}><option value={0}>Tutte</option>{[5, 10, 15, 30, 60].map(value => <option key={value} value={value}>Entro {value} minuti</option>)}</select></label>
+        <label>Stato <select value={stateFilter} onChange={event => setStateFilter(event.target.value)}><option value="all">Tutti</option><option value="new">Da iniziare</option><option value="started">In corso</option><option value="completed">Completati</option></select></label>
+        <label>Tema suggerito <select value={themeFilter} onChange={event => setThemeFilter(event.target.value)}><option value="">Tutti</option>{LISTENING_THEMES.map(theme => <option key={theme.name}>{theme.name}</option>)}</select></label>
+        <label><input type="checkbox" checked={audioOnly} onChange={event => setAudioOnly(event.target.checked)} /> Solo audio originale</label>
+        {maxMinutes > 0 && <button className="btn primary small" disabled={!timedPlaylist(visible, maxMinutes).length} onClick={() => onPlay(timedPlaylist(visible, maxMinutes))}>Ascolta un percorso entro {maxMinutes} minuti</button>}
+      </div>}
 
       {bookmarks.length > 0 && (
         <div className="narration-resume-banner">
@@ -460,6 +541,7 @@ export function ListeningLibrary({
             }
           }
           resetList()
+          setLatest(false)
           setSectionId('')
           if (!topic) {
             setTopicName('')
@@ -643,7 +725,7 @@ export function ListeningLibrary({
             next === null &&
             !loading &&
             !visible.length &&
-            !pending.length &&
+            (!pending.length || audioOnly) &&
             !error && <p>Nessun contenuto trovato.</p>}
 
           {visible.length > 0 && (
@@ -662,7 +744,9 @@ export function ListeningLibrary({
                       <button className="queue-item" onClick={() => onPlay(visible, index)}>
                         <span className="q-title">{track.title}</span>
                         <span className="q-meta">
-                          {formatDuration(track.duration)}
+                          {formatDuration(track.duration)} · Audio originale
+                          {readingStates[track.id]?.state === 'completed' ? ' · Completato' : readingStates[track.id]?.state === 'started' ? ' · In corso' : ''}
+                          {titleThemes(track.title).length ? ' · ' + titleThemes(track.title).join(', ') : ''}
                           {track.matchIn ? ` · ${track.matchIn}` : ''}
                         </span>
                       </button>
@@ -684,7 +768,7 @@ export function ListeningLibrary({
                               })
                             }
                           >
-                            Frase per frase
+                            Leggi e scegli un brano
                           </button>
                         )}
                         {kind === 'videos' && track.subtitleUrl && (
@@ -694,9 +778,10 @@ export function ListeningLibrary({
                               setVideoReader({ ...track, subtitleUrl: track.subtitleUrl! })
                             }
                           >
-                            Frase per frase
+                            Leggi e scegli un brano
                           </button>
                         )}
+                        <DownloadButton track={track} />
                         <details className="more-actions">
                           <summary>Altro</summary>
                           <div className="result-actions">
@@ -744,11 +829,11 @@ export function ListeningLibrary({
             </div>
           )}
 
-          {pending.length > 0 && (
+          {!audioOnly && pending.length > 0 && (
             <div className="pending-audio">
               <h3>Solo testo</h3>
               <ul className="library-list">
-                {pending.map((item) => {
+                {pending.filter(item => stateFilter === 'all' || (readingStates[item.id]?.state || 'new') === stateFilter).map((item) => {
                   const saved = loadBookmark(item.id)
                   return (
                     <li className="listening-result pending" key={item.id}>

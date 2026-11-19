@@ -1,4 +1,7 @@
 import { hasPersonalVoiceToken, setPersonalVoiceToken, forgetVoiceSample, hasVoiceSample, saveVoiceSample } from './personalVoice'
+import { localResponse, offlineAudio, recordProgress, rememberArticle } from './offlineLibrary.ts'
+import { DownloadButton } from './DownloadButton'
+import { clearGeneratedAudio } from './generatedAudio.ts'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearBookmark,
@@ -19,6 +22,7 @@ import {
   NARRATION_RATES,
   NARRATION_VOICES,
   primeNarrationAudio,
+  skipNarrationAudio,
   speakOriginalAudio,
   speakSentences,
   type NarrationRate,
@@ -27,6 +31,8 @@ import {
   type SpeakProgress,
   type SpeechStatus,
 } from './speechReader'
+
+const NO_MARKERS: AudioMarker[] = []
 
 type SelectMode = 'start' | 'end'
 
@@ -57,7 +63,7 @@ export function ArticleNarration({
   source,
   transcript,
   audioUrl,
-  markers = [],
+  markers = NO_MARKERS,
   audioDuration = 0,
   onClose,
 }: {
@@ -71,7 +77,11 @@ export function ArticleNarration({
   audioDuration?: number
   onClose: () => void
 }) {
+  const offlineOriginalUrl = useRef<string | null>(null)
+  useEffect(() => () => { if (offlineOriginalUrl.current) URL.revokeObjectURL(offlineOriginalUrl.current) }, [])
   const hasOriginal = Boolean(audioUrl)
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const [advanced, setAdvanced] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [article, setArticle] = useState<ArticlePayload | null>(null)
@@ -101,6 +111,7 @@ export function ArticleNarration({
   const [shareNote, setShareNote] = useState('')
   const audioChunksRef = useRef<Blob[]>([])
   const speechRef = useRef<SpeakHandle | null>(null)
+  const playRevision = useRef(0)
   const sentencesRef = useRef<ArticleSentence[]>([])
   const rangeRef = useRef({
     startSentence: 0,
@@ -134,13 +145,14 @@ export function ArticleNarration({
     setError('')
     const content: Promise<ArticlePayload> = transcript !== undefined
       ? Promise.resolve({ text: transcript, title, source })
-      : fetch('/api/article-text?' + articleTextQuery(source), { signal: controller.signal })
+      : localResponse('/api/article-text?' + articleTextQuery(source), controller.signal)
           .then(async res => {
             if (!res.ok) throw new Error('Impossibile leggere il testo dell’articolo.')
             return res.json() as Promise<ArticlePayload>
           })
     content
       .then((data) => {
+        if (controller.signal.aborted) return
         if (!data.text?.trim()) throw new Error('Testo articolo non trovato.')
         const payload: ArticlePayload = {
           title: data.title || title,
@@ -163,6 +175,7 @@ export function ArticleNarration({
         ) {
           units = assignProportionalTimes(units, audioDuration)
         }
+        void rememberArticle({ id: articleId, title: payload.title, source: payload.source, audioUrl, audioDuration, markers }).catch(() => {})
         setArticle(payload)
         setSentences(units)
         if (audioUrl) setVoice('jw')
@@ -208,7 +221,7 @@ export function ArticleNarration({
         setLoading(false)
       })
     return () => controller.abort()
-  }, [articleId, source, title, transcript, audioUrl, audioDuration, markers])
+  }, [articleId, source, title, transcript, audioUrl, audioDuration, markers, loadAttempt])
 
   function persistFromProgress(p: SpeakProgress | null, units = sentencesRef.current) {
     if (transcript !== undefined || !p || !units.length) return
@@ -254,6 +267,7 @@ export function ArticleNarration({
         // Closing the reader stops audio; backgrounding does not.
         handle.stop()
       }
+      playRevision.current += 1
       speechRef.current = null
     }
   }, [articleId])
@@ -319,6 +333,7 @@ export function ArticleNarration({
   }
 
   async function startPlayback(fromBookmark = false, entire = false) {
+    const revision = ++playRevision.current
     if (!sentences.length || status === 'loading') return
     if (voice === 'personal' && !sampleReady) {
       setSampleError('Scegli prima il memo con la tua voce.')
@@ -376,6 +391,7 @@ export function ArticleNarration({
         persistFromProgress(speechRef.current?.getProgress() ?? null)
       }
       if (next === 'completed') {
+        recordProgress(articleId, sentences.length, true)
         clearBookmark(articleId)
         setBookmark(null)
         setProgress(null)
@@ -393,15 +409,20 @@ export function ArticleNarration({
         setDetail('Tempi audio non disponibili per questo brano.')
         return
       }
+      const savedAudio = await offlineAudio(articleId).catch(() => undefined)
+      if (revision !== playRevision.current) return
+      if (offlineOriginalUrl.current) URL.revokeObjectURL(offlineOriginalUrl.current)
+      offlineOriginalUrl.current = savedAudio ? URL.createObjectURL(savedAudio) : null
       speechRef.current = await speakOriginalAudio({
-        url: audioUrl,
+        url: offlineOriginalUrl.current || audioUrl,
         start: times.start,
         end: times.end,
         sentences,
         rate,
         onStatus,
         onProgress(p) {
-          setProgress(p)
+          recordProgress(articleId, p.sentenceIndex + p.wordIndex / 100)
+        setProgress(p)
         },
       })
       return
@@ -418,6 +439,7 @@ export function ArticleNarration({
       },
       onStatus,
       onProgress(p) {
+        recordProgress(articleId, p.sentenceIndex + p.wordIndex / 100)
         setProgress(p)
       },
     })
@@ -439,6 +461,7 @@ export function ArticleNarration({
   }
 
   function stopPlayback() {
+    playRevision.current += 1
     const p = speechRef.current?.getProgress() ?? progress
     persistFromProgress(p)
     speechRef.current?.stop()
@@ -523,7 +546,8 @@ export function ArticleNarration({
       </header>
 
       {loading && <p role="status">Carico il testo da JW.org…</p>}
-      {error && <p className="error" role="alert">{error}</p>}
+      {error && <p className="error" role="alert">{error} <button type="button" className="btn ghost small" onClick={() => setLoadAttempt(value => value + 1)}>Riprova</button></p>}
+      {loading && <button type="button" className="btn ghost small" onClick={onClose}>Annulla caricamento</button>}
 
       {!loading && !error && (
         <>
@@ -542,6 +566,10 @@ export function ArticleNarration({
             </div>
           )}
 
+          <button type="button" className="btn ghost small" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}>
+            {advanced ? 'Chiudi selezione del brano' : 'Scegli inizio e fine del brano'}
+          </button>
+          <div hidden={!advanced}>
           <div
             className={`narration-step-card mode-${selectMode}`}
             role="status"
@@ -605,6 +633,7 @@ export function ArticleNarration({
             </div>
           </div>
 
+          </div>
           <div className="narration-controls">
             {status === 'speaking' || status === 'paused' || status === 'error' ? (
               <>
@@ -631,7 +660,7 @@ export function ArticleNarration({
                 {status === 'loading'
                   ? 'Preparazione…'
                   : endSentence === null
-                    ? `Ascolta dalla frase ${startSentence + 1}`
+                    ? startSentence === 0 && startWord === 0 ? 'Ascolta articolo' : `Ascolta dalla frase ${startSentence + 1}`
                     : `Ascolta frasi ${startSentence + 1}–${endSentence + 1}`}
               </button>
             )}
@@ -853,6 +882,14 @@ export function ArticleNarration({
             </p>
           )}
 
+          {audioUrl && <DownloadButton track={{ id: articleId, title: article?.title || title, url: audioUrl, duration: audioDuration, sectionSlug: 'tutto', sectionName: 'Articolo' }} />}
+          {(status === 'speaking' || status === 'paused') && <aside className="narration-dock" aria-label="Lettore compatto articolo">
+            <strong>{article?.title || title}</strong>
+            <button className="icon-btn" aria-label="Indietro di 15 secondi" onClick={() => skipNarrationAudio(-15)}>−15</button>
+            <button className="icon-btn" aria-label={status === 'speaking' ? 'Pausa lettura' : 'Riprendi lettura'} onClick={togglePause}>{status === 'speaking' ? '❚❚' : '▶'}</button>
+            <button className="icon-btn" aria-label="Avanti di 15 secondi" onClick={() => skipNarrationAudio(15)}>+15</button>
+          </aside>}
+          {voice === 'personal' && <button className="btn ghost small" onClick={() => void clearGeneratedAudio().then(() => setShareNote('Audio generati rimossi dal dispositivo'))}>Libera memoria degli audio generati</button>}
           {status === 'error' && voice === 'personal' && <div className="narration-controls">
             <button className="btn ghost" type="button" onClick={async () => {
               const selection = sliceRange(sentences, startSentence, startWord, endSentence, endWord)

@@ -23,7 +23,7 @@ export default defineConfig({
         name: 'JW Ascolta',
         short_name: 'JW Ascolta',
         description:
-          'Riproduci cantici, canzoni e musica JW.org in ordine o a caso, anche con Siri.',
+          'Musica, articoli audio e video JW.org. Raccolte, segnalibri e contenuti salvati offline.',
         theme_color: '#0c2429',
         background_color: '#0c2429',
         display: 'standalone',

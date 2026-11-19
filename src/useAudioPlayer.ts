@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { onPauseMusic, requestPauseNarration } from './audioBus'
 import type { Track } from './catalog'
+import { offlineAudio, recordProgress } from './offlineLibrary.ts'
 
 export interface PlayerState {
   playlist: Track[]
@@ -37,6 +38,8 @@ export function useAudioPlayer() {
   const playlistRef = useRef<Track[]>([])
   const indexRef = useRef(0)
   const needsGestureRef = useRef(false)
+  const loadRevision = useRef(0)
+  const offlineUrl = useRef<string | null>(null)
 
   useEffect(() => {
     const audio = new Audio()
@@ -50,6 +53,8 @@ export function useAudioPlayer() {
     audioRef.current = audio
 
     const onTime = () => {
+      const track = playlistRef.current[indexRef.current]
+      if (track && audio.currentTime > 1) recordProgress(track.id, audio.currentTime, Number.isFinite(audio.duration) && audio.currentTime >= audio.duration - 2)
       const end = clipEndRef.current
       if (
         end != null &&
@@ -106,15 +111,9 @@ export function useAudioPlayer() {
         ...s,
         loading: false,
         playing: false,
-        error: 'Errore di riproduzione. Passo al successivo…',
+        error: navigator.onLine ? 'Audio non disponibile. Riprova o passa al successivo.' : 'Connessione assente. Usa un contenuto salvato offline.',
       }))
-      if (autoSkipTimer.current) window.clearTimeout(autoSkipTimer.current)
-      autoSkipTimer.current = window.setTimeout(() => {
-        const list = playlistRef.current
-        if (!list.length) return
-        const hasNext = indexRef.current + 1 < list.length
-        if (hasNext || repeat.current) playNextRef.current()
-      }, 700)
+
     }
 
     audio.addEventListener('timeupdate', onTime)
@@ -138,6 +137,8 @@ export function useAudioPlayer() {
       } catch {
         /* ignore */
       }
+      if (offlineUrl.current) URL.revokeObjectURL(offlineUrl.current)
+      loadRevision.current += 1
       audioRef.current = null
     }
   }, [])
@@ -182,7 +183,12 @@ export function useAudioPlayer() {
     }))
     if (pendingSeek.current) audio.removeEventListener('loadedmetadata', pendingSeek.current)
     pendingSeek.current = null
-    audio.src = track.url
+    const revision = ++loadRevision.current
+    const saved = await offlineAudio(track.id).catch(() => undefined)
+    if (revision !== loadRevision.current) return
+    if (offlineUrl.current) URL.revokeObjectURL(offlineUrl.current)
+    offlineUrl.current = saved ? URL.createObjectURL(saved) : null
+    audio.src = offlineUrl.current || track.url
     audio.load()
     audio.playbackRate = speed.current
     if (startAt > 0) {
@@ -257,6 +263,8 @@ export function useAudioPlayer() {
     const audio = audioRef.current
     if (!audio) return
     const onEnded = () => {
+      const track = playlistRef.current[indexRef.current]
+      if (track) recordProgress(track.id, audio.duration || 0, true)
       if (stopAfterCurrentRef.current) {
         stopAfterCurrentRef.current = false
         setState((s) => ({ ...s, stopAfterCurrent: false, playing: false }))
@@ -432,6 +440,7 @@ export function useAudioPlayer() {
     }))
     if (tracks[safeIndex]) await loadAndPlay(tracks[safeIndex], autoplay, position)
     else {
+      loadRevision.current += 1
       audioRef.current?.pause()
       audioRef.current?.removeAttribute('src')
       audioRef.current?.load()
@@ -576,7 +585,12 @@ export function useAudioPlayer() {
       audio.volume = startVol
     },
     /** Stop playback and empty the queue (music, articles, or video audio). */
+    retry() {
+      const track = playlistRef.current[indexRef.current]
+      if (track) void loadAndPlay(track, true, audioRef.current?.currentTime || 0)
+    },
     stopAndClear() {
+      loadRevision.current += 1
       if (autoSkipTimer.current) window.clearTimeout(autoSkipTimer.current)
       const audio = audioRef.current
       if (audio) {
