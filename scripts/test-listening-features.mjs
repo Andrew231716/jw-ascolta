@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { timedPlaylist, titleThemes } from '../src/listeningThemes.ts'
 import { cachedGeneration } from '../src/generatedAudio.ts'
 import { localResponse, listeningProgress, recordProgress, restoreBackup } from '../src/offlineLibrary.ts'
+import { articleDocid, sameArticleTitle } from '../api/lib/article-metadata.ts'
 import { generationResult } from '../src/personalVoice.ts'
 
 const values = new Map()
@@ -53,3 +54,8 @@ await restoreBackup(backup({ app: 'jw-ascolta', version: 1, values: { 'jw-ascolt
 assert.equal(JSON.parse(values.get('jw-ascolta:favorites'))[0].id, 'saved')
 assert.throws(() => generationResult('data: {"event_id":"1","msg":"process_completed","success":false,"output":{"error":"GPU quota exceeded"}}', '1'), /Quota Chatterbox/)
 console.log('ok · offline content, cached narration, backup validation, progress and listening paths')
+
+assert.equal(articleDocid('<a data-page-id="mid999999999"></a><article class="docId-501100133 docClass-142">'), '501100133')
+assert.equal(articleDocid('<a data-page-id="mid999999999"></a>'), null)
+assert.equal(sameArticleTitle('Chi è Geova?', 'Cybercrime: qual è la soluzione?'), false)
+assert.equal(sameArticleTitle('Cybercrime: qual è la soluzione?', 'CYBERCRIME — QUAL È LA SOLUZIONE?'), true)

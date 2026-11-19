@@ -40,8 +40,11 @@ export async function removeDownload(id: string) {
   window.dispatchEvent(new Event(LIBRARY_CHANGED))
 }
 export async function saveDownload(track: Track, signal?: AbortSignal) {
-  const response = await fetch(track.url, { signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(120000)]) })
-  if (!response.ok) throw new Error('Download non disponibile. Riprova con una connessione stabile.')
+  const response = await fetch('/api/download?' + new URLSearchParams({ url: track.url }), { signal: AbortSignal.any([signal || new AbortController().signal, AbortSignal.timeout(120000)]) })
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}))
+    throw new Error(data.error || 'Download non disponibile. Riprova con una connessione stabile.')
+  }
   const contentType = response.headers.get('Content-Type') || ''
   if (!/audio|video|octet-stream/i.test(contentType)) throw new Error('Il collegamento non contiene un file audio o video.')
   const max = 150 * 1024 * 1024
@@ -60,6 +63,7 @@ export async function saveDownload(track: Track, signal?: AbortSignal) {
     }
   } finally { await reader.cancel().catch(() => {}) }
   if (!bytes) throw new Error('Il file ricevuto è vuoto.')
+  if (signal?.aborted) throw signal.reason || new DOMException('Annullato', 'AbortError')
   const blob = new Blob(parts, { type: contentType })
   await transaction('readwrite', store => store.put({ id: track.id, track, bytes, savedAt: Date.now(), blob }))
   window.dispatchEvent(new Event(LIBRARY_CHANGED))

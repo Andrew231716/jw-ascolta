@@ -1,3 +1,5 @@
+import { articleDocid, sameArticleTitle } from './lib/article-metadata'
+
 export const config = { runtime: 'edge', maxDuration: 60 }
 
 const site = 'https://www.jw.org'
@@ -650,7 +652,18 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
   const batch = candidates.slice(offset, offset + 12)
   const results = await Promise.allSettled(
     batch.map(async ([id, meta]) => {
-      const file = await fetchArticleAudio(id)
+      let docid = id
+      let file = await fetchArticleAudio(docid)
+      if (!file || (meta.title && !sameArticleTitle(file.title, meta.title))) {
+        const page = await (await read(site + meta.path)).text()
+        const canonicalId = articleDocid(page)
+        if (canonicalId && canonicalId !== docid) {
+          docid = canonicalId
+          file = await fetchArticleAudio(docid)
+        }
+        const pageTitle = page.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]
+        if (file && pageTitle && !sameArticleTitle(file.title, label(pageTitle))) file = null
+      }
       if (!file) {
         return {
           pending: {
@@ -666,14 +679,14 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
       return {
         pending: null as PendingItem | null,
         track: {
-          id: 'article-' + id,
+          id: 'article-' + docid,
           title: file.title || meta.title || `Articolo ${id}`,
           url: file.url,
           duration: file.duration,
           source: site + meta.path,
           topics: name ? [name] : [],
           matchIn: meta.matchIn,
-          docid: id,
+          docid,
           canRead: true,
           markers: file.markers,
         } satisfies LibraryTrack,
