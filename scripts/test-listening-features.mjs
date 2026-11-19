@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { timedPlaylist, titleThemes } from '../src/listeningThemes.ts'
 import { cachedGeneration } from '../src/generatedAudio.ts'
 import { localResponse, listeningProgress, recordProgress, restoreBackup } from '../src/offlineLibrary.ts'
+import articleHandler from '../api/article-text.ts'
+import listeningHandler from '../api/listening.ts'
 import downloadHandler from '../api/download.ts'
 import { articleDocid, sameArticleTitle } from '../api/lib/article-metadata.ts'
 import { generationResult } from '../src/personalVoice.ts'
@@ -69,3 +71,24 @@ const download = await downloadHandler(new Request('https://app.test/api/downloa
 assert.equal(download.status, 200)
 assert.equal(await download.text(), 'MP3data')
 console.log('ok · media download and article identity')
+
+const articleHtml = '<a data-page-id="mid999999999"></a><main><article class="docId-501100133"><h1>Ultimo articolo</h1><div class="bodyTxt"><p data-pid="1">Un testo da leggere.</p></div></article></main>'
+globalThis.fetch = async url => {
+  if (String(url).includes('GETPUBMEDIALINKS')) return Response.json({ files: { I: { MP3: [{ title: 'Un altro articolo', mimetype: 'audio/mpeg', file: { url: 'https://cfp2.jw-cdn.org/wrong.mp3' } }] } } })
+  return new Response(articleHtml)
+}
+const wrongAudio = await articleHandler(new Request('https://app.test/api/article-text?path=/it/biblioteca-digitale/articoli/tema/ultimo/&audio=1'))
+const correctText = await wrongAudio.json()
+assert.equal(correctText.text, 'Un testo da leggere.')
+assert.equal(correctText.audio, undefined)
+
+globalThis.fetch = async url => {
+  if (String(url).includes('/it/cosa-nuovo/')) return new Response('<a href="/it/biblioteca-digitale/articoli/tema/vecchio/" data-page-id="mid999999999">Navigazione</a><main><a href="/it/biblioteca-digitale/articoli/tema/ultimo/" data-page-id="mid501100133">Ultimo articolo</a></main>')
+  assert.ok(String(url).includes('docid=501100133'))
+  return Response.json({ files: { I: { MP3: [{ title: 'Ultimo articolo', mimetype: 'audio/mpeg', duration: 100, file: { url: 'https://cfp2.jw-cdn.org/right.mp3' } }] } } })
+}
+const latestResponse = await listeningHandler(new Request('https://app.test/api/listening?kind=articles&latest=1'))
+const latest = await latestResponse.json()
+assert.equal(latest.tracks.length, 1)
+assert.equal(latest.tracks[0].title, 'Ultimo articolo')
+console.log('ok · latest publications and matching article audio')

@@ -1,4 +1,4 @@
-import { articleDocid, sameArticleTitle } from './lib/article-metadata'
+import { articleDocid, sameArticleTitle } from './lib/article-metadata.ts'
 
 export const config = { runtime: 'edge', maxDuration: 60 }
 
