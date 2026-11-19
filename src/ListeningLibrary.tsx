@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArticleNarration } from './ArticleNarration'
-import { listBookmarks, loadBookmark, type NarrationBookmark } from './articleText'
+import {
+  clearBookmark,
+  listBookmarks,
+  loadBookmark,
+  type NarrationBookmark,
+} from './articleText'
 import { formatDuration, normalizeTitle, type Track } from './catalog'
 import { VideoClipReader } from './VideoClipReader'
 
@@ -256,13 +261,26 @@ export function ListeningLibrary({
 
       {bookmarks.length > 0 && (
         <div className="narration-resume-banner">
-          <p><strong>In ascolto · riprendi</strong></p>
+          <div className="resume-banner-head">
+            <p><strong>In ascolto · riprendi</strong></p>
+            <button
+              type="button"
+              className="btn ghost small"
+              onClick={() => {
+                for (const item of listBookmarks()) clearBookmark(item.articleId)
+                setBookmarks([])
+                setBookmarkTick((n) => n + 1)
+              }}
+            >
+              Elimina tutti
+            </button>
+          </div>
           <ul className="bookmark-list">
             {bookmarks.slice(0, 5).map((item) => (
-              <li key={item.articleId}>
+              <li key={item.articleId} className="bookmark-row">
                 <button
                   type="button"
-                  className="btn ghost small"
+                  className="btn ghost small bookmark-open"
                   onClick={() =>
                     openReader({
                       id: item.articleId,
@@ -273,6 +291,18 @@ export function ListeningLibrary({
                 >
                   {item.title}
                   <span className="q-meta"> · «{item.snippet}»</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  aria-label={`Elimina ripresa di ${item.title}`}
+                  onClick={() => {
+                    clearBookmark(item.articleId)
+                    setBookmarks(listBookmarks())
+                    setBookmarkTick((n) => n + 1)
+                  }}
+                >
+                  Elimina
                 </button>
               </li>
             ))}

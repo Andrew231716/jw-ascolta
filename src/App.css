@@ -890,10 +890,32 @@ code {
 }
 
 .bookmark-list .btn {
-  width: 100%;
   text-align: start;
   justify-content: flex-start;
   white-space: normal;
+}
+
+.bookmark-list .bookmark-open {
+  flex: 1;
+  min-width: 0;
+}
+
+.bookmark-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: stretch;
+}
+
+.resume-banner-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.resume-banner-head p {
+  margin: 0;
 }
 
 .narration-hint {

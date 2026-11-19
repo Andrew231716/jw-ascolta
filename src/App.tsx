@@ -16,6 +16,7 @@ import { listBookmarks } from './articleText'
 import { useAudioPlayer } from './useAudioPlayer'
 import { ListeningLibrary } from './ListeningLibrary'
 import {
+  clearVideoBookmark,
   isStaticMirrorHost,
   listRecent,
   listVideoBookmarks,
@@ -1086,6 +1087,16 @@ export default function App() {
                   <button className="queue-item" onClick={() => playVideoBookmark(bookmark)}>
                     <span className="q-title">{bookmark.title}</span>
                     <span className="q-meta">«{bookmark.snippet}»</span>
+                  </button>
+                  <button
+                    className="btn ghost small"
+                    aria-label={`Elimina ${bookmark.title}`}
+                    onClick={() => {
+                      clearVideoBookmark(bookmark.trackId)
+                      setVideoBookmarks(listVideoBookmarks())
+                    }}
+                  >
+                    Elimina
                   </button>
                 </li>
               ))}

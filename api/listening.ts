@@ -159,12 +159,110 @@ function tokenMatches(hayToken: string, needle: string) {
   return false
 }
 
+/** Short Italian function words that match almost every sentence if kept. */
+const ITALIAN_STOPWORDS = new Set([
+  'a',
+  'ad',
+  'al',
+  'allo',
+  'ai',
+  'agli',
+  'all',
+  'agl',
+  'alla',
+  'alle',
+  'con',
+  'col',
+  'coi',
+  'da',
+  'dal',
+  'dallo',
+  'dai',
+  'dagli',
+  'dall',
+  'dagl',
+  'dalla',
+  'dalle',
+  'di',
+  'del',
+  'dello',
+  'dei',
+  'degli',
+  'dell',
+  'degl',
+  'della',
+  'delle',
+  'e',
+  'ed',
+  'che',
+  'chi',
+  'cui',
+  'come',
+  'in',
+  'nel',
+  'nello',
+  'nei',
+  'negli',
+  'nell',
+  'negl',
+  'nella',
+  'nelle',
+  'su',
+  'sul',
+  'sullo',
+  'sui',
+  'sugli',
+  'sull',
+  'sugl',
+  'sulla',
+  'sulle',
+  'per',
+  'tra',
+  'fra',
+  'il',
+  'lo',
+  'la',
+  'i',
+  'gli',
+  'le',
+  'un',
+  'uno',
+  'una',
+  'ma',
+  'o',
+  'od',
+  'se',
+  'sia',
+  'sono',
+  'e',
+  'è',
+  'ha',
+  'ho',
+  'hai',
+  'hanno',
+  'non',
+  'si',
+  'mi',
+  'ti',
+  'ci',
+  'vi',
+  'ne',
+])
+
+function significantQueryWords(query: string) {
+  return normalizeQuery(query)
+    .split(' ')
+    .filter(Boolean)
+    .filter((word) => word.length >= 4 && !ITALIAN_STOPWORDS.has(word))
+}
+
 function matches(haystack: string, query: string) {
   const text = normalizeQuery(haystack)
   const normalized = normalizeQuery(query)
   if (!normalized) return false
   if (text.includes(normalized)) return true
-  const words = normalized.split(' ').filter(Boolean)
+  const words = significantQueryWords(query)
+  // Phrase made only of stopwords / tiny tokens: keep exact-includes behaviour only.
   if (!words.length) return false
   const hayTokens = text.split(' ').filter(Boolean)
   return words.every(
@@ -573,6 +671,7 @@ async function pubTracks(
         duration: Number(item.duration ?? 0),
         topics: [topicName],
         source: site + articles + 'altri-argomenti/',
+        matchIn: query ? 'Nel titolo' : undefined,
       })),
       pending: [],
       next: offset + slice.length < files.length ? offset + slice.length : null,
@@ -580,8 +679,8 @@ async function pubTracks(
     }
   }
 
-  // Magazines: probe recent issues
-  const issues = recentIssues(pub === 'g' || pub === 'wp' ? 18 : 12)
+  // Magazines: look far enough back for study WT audio (e.g. giugno 2024 in late 2026).
+  const issues = recentIssues(pub === 'w' ? 36 : pub === 'g' || pub === 'wp' ? 24 : 18)
   const batches = await Promise.allSettled(
     issues.map(async (issue) => {
       const params = new URLSearchParams({
@@ -621,6 +720,7 @@ async function pubTracks(
             duration: Number(item.duration ?? 0),
             topics: [topicName, String(data.formattedDate || issue)],
             source: site + '/it/biblioteca-digitale/riviste/',
+            matchIn: query ? 'Nel titolo' : undefined,
           }),
         )
     }),
@@ -691,7 +791,11 @@ export default async function handler(request: Request) {
         ...new Map(
           available.flatMap((result) => result.tracks).map((track) => [track.id, track]),
         ).values(),
-      ]
+      ].sort((a, b) => {
+        const rank = (track: LibraryTrack) =>
+          track.matchIn === 'Nel titolo' ? 0 : track.matchIn === 'Nel testo' ? 1 : 2
+        return rank(a) - rank(b) || a.title.localeCompare(b.title, 'it')
+      })
       const pending = [
         ...new Map(
           available

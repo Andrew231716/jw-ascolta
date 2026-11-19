@@ -82,8 +82,19 @@ function tokenMatches(hayToken: string, needle: string) {
   return false
 }
 
+const ITALIAN_STOPWORDS = new Set([
+  'a', 'ad', 'al', 'alla', 'alle', 'ai', 'agli', 'con', 'da', 'dal', 'dalla', 'dalle', 'dai',
+  'dagli', 'di', 'del', 'della', 'delle', 'dei', 'degli', 'e', 'ed', 'che', 'chi', 'cui', 'come',
+  'in', 'nel', 'nella', 'nelle', 'nei', 'negli', 'su', 'sul', 'sulla', 'sulle', 'sui', 'sugli',
+  'per', 'tra', 'fra', 'il', 'lo', 'la', 'i', 'gli', 'le', 'un', 'uno', 'una', 'ma', 'o', 'od',
+  'se', 'sia', 'sono', 'è', 'ha', 'ho', 'hai', 'hanno', 'non', 'si', 'mi', 'ti', 'ci', 'vi', 'ne',
+])
+
 export function queryWords(query: string) {
-  return normalizeQuery(query).split(' ').filter(Boolean)
+  return normalizeQuery(query)
+    .split(' ')
+    .filter(Boolean)
+    .filter((word) => word.length >= 4 && !ITALIAN_STOPWORDS.has(word))
 }
 
 export function wordMatchesQuery(word: string, query: string) {
