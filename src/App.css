@@ -787,19 +787,64 @@ code {
   margin-inline-start: .5rem;
 }
 
+.available-audio,
 .pending-audio {
   margin-top: 1.25rem;
+  display: grid;
+  gap: 0.55rem;
 }
 
+.available-audio h3,
 .pending-audio h3 {
-  margin: 0 0 0.35rem;
+  margin: 0;
   font-family: var(--font-display);
   font-size: 1.15rem;
 }
 
+.audio-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+  align-items: center;
+}
+
+.audio-badge {
+  display: inline-block;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.35;
+  vertical-align: 0.05em;
+}
+
+.audio-badge.has-audio {
+  color: #07161a;
+  background: #7eb8a8;
+  border-color: #7eb8a8;
+}
+
+.audio-badge.no-audio {
+  color: #07161a;
+  background: #f0c56d;
+  border-color: #f0c56d;
+}
+
+.listening-result.has-jw-audio {
+  border-inline-start: 3px solid #7eb8a8;
+  padding-inline-start: 0.45rem;
+}
+
+.listening-result.pending {
+  border-inline-start: 3px solid #f0c56d;
+  padding-inline-start: 0.45rem;
+}
+
 .listening-result.pending .queue-item {
   cursor: default;
-  opacity: 0.9;
+  opacity: 0.95;
 }
 
 .article-narration {
