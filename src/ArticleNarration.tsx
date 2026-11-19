@@ -272,8 +272,9 @@ export function ArticleNarration({
       setSampleError('Scegli prima il memo con la tua voce.')
       return
     }
-    primeNarrationAudio()
+    const retry = status === 'error' ? speechRef.current?.getProgress() : null
     speechRef.current?.stop()
+    primeNarrationAudio()
     audioChunksRef.current = []
 
     let from = startSentence
@@ -286,7 +287,10 @@ export function ArticleNarration({
       to = toWord = null
       resetRange()
     }
-    if (fromBookmark && bookmark) {
+    if (fromBookmark && retry) {
+      from = retry.sentenceIndex
+      word = retry.wordIndex
+    } else if (fromBookmark && bookmark) {
       from = bookmark.sentenceIndex
       word = bookmark.wordIndex
       to = bookmark.endSentenceIndex
@@ -319,7 +323,8 @@ export function ArticleNarration({
       voice,
       rate,
       onChunkReady(blob) {
-        audioChunksRef.current.push(blob)
+        if (voice === 'personal') audioChunksRef.current = [blob]
+        else audioChunksRef.current.push(blob)
       },
       onStatus(next, info) {
         setStatus(next)

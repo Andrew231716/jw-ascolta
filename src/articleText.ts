@@ -144,11 +144,8 @@ export function sliceRange(
     }
     const text = slice.map((w) => w.text).join(' ').trim()
     if (text) {
-      // Keep sentence index aligned even when we further chunk for TTS.
-      for (const piece of chunkForTts(text)) {
-        texts.push(piece)
-        sentenceIndexes.push(i)
-      }
+      texts.push(text)
+      sentenceIndexes.push(i)
     }
   }
 
