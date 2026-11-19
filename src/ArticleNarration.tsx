@@ -4,16 +4,22 @@ import {
   clearBookmark,
   loadBookmark,
   saveBookmark,
+  assignProportionalTimes,
+  sentencesFromParagraphs,
   sliceRange,
   snippetAt,
   splitSentences,
+  timeRangeForSelection,
+  type ArticleParagraph,
   type ArticleSentence,
+  type AudioMarker,
   type NarrationBookmark,
 } from './articleText'
 import {
   NARRATION_RATES,
   NARRATION_VOICES,
   primeNarrationAudio,
+  speakOriginalAudio,
   speakSentences,
   type NarrationRate,
   type NarrationVoiceId,
@@ -28,6 +34,7 @@ type ArticlePayload = {
   title: string
   text: string
   source: string
+  paragraphs?: ArticleParagraph[]
 }
 
 /** Build article-text query from a JW.org page URL or finder?docid= link. */
@@ -49,14 +56,22 @@ export function ArticleNarration({
   title,
   source,
   transcript,
+  audioUrl,
+  markers = [],
+  audioDuration = 0,
   onClose,
 }: {
   articleId: string
   title: string
   source: string
   transcript?: string
+  /** JW.org MP3 for the same article/chapter when available. */
+  audioUrl?: string
+  markers?: AudioMarker[]
+  audioDuration?: number
   onClose: () => void
 }) {
+  const hasOriginal = Boolean(audioUrl)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [article, setArticle] = useState<ArticlePayload | null>(null)
@@ -67,7 +82,12 @@ export function ArticleNarration({
   const [endSentence, setEndSentence] = useState<number | null>(null)
   const [endWord, setEndWord] = useState<number | null>(null)
   const [voice, setVoice] = useState<NarrationVoiceId>(() => {
-    try { return NARRATION_VOICES.find(v => v.id === localStorage.getItem('jw-narrator'))?.id ?? 'isabella' } catch { return 'isabella' }
+    if (audioUrl) return 'jw'
+    try {
+      return NARRATION_VOICES.find((v) => v.id === localStorage.getItem('jw-narrator'))?.id ?? 'isabella'
+    } catch {
+      return 'isabella'
+    }
   })
   const [sampleReady, setSampleReady] = useState(hasVoiceSample)
   const tokenField = useRef<HTMLInputElement>(null)
@@ -112,7 +132,7 @@ export function ArticleNarration({
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    const content = transcript !== undefined
+    const content: Promise<ArticlePayload> = transcript !== undefined
       ? Promise.resolve({ text: transcript, title, source })
       : fetch('/api/article-text?' + articleTextQuery(source), { signal: controller.signal })
           .then(async res => {
@@ -126,10 +146,26 @@ export function ArticleNarration({
           title: data.title || title,
           text: data.text,
           source: data.source || source,
+          paragraphs: data.paragraphs,
         }
-        const units = splitSentences(payload.text)
+        let units =
+          payload.paragraphs?.length
+            ? sentencesFromParagraphs(
+                payload.paragraphs,
+                markers,
+                audioUrl ? audioDuration : 0,
+              )
+            : splitSentences(payload.text)
+        if (
+          audioUrl &&
+          audioDuration > 0 &&
+          units.some((item) => item.startTime == null || item.endTime == null)
+        ) {
+          units = assignProportionalTimes(units, audioDuration)
+        }
         setArticle(payload)
         setSentences(units)
+        if (audioUrl) setVoice('jw')
 
         const params = new URLSearchParams(window.location.search)
         const qStart = params.has('ns') ? Number(params.get('ns')) : NaN
@@ -172,7 +208,7 @@ export function ArticleNarration({
         setLoading(false)
       })
     return () => controller.abort()
-  }, [articleId, source, title, transcript])
+  }, [articleId, source, title, transcript, audioUrl, audioDuration, markers])
 
   function persistFromProgress(p: SpeakProgress | null, units = sentencesRef.current) {
     if (transcript !== undefined || !p || !units.length) return
@@ -333,6 +369,44 @@ export function ArticleNarration({
       queueLength: sliced.texts.length,
     })
 
+    const onStatus = (next: SpeechStatus, info?: string) => {
+      setStatus(next)
+      if (info) setDetail(info)
+      if (next === 'paused' || next === 'speaking') {
+        persistFromProgress(speechRef.current?.getProgress() ?? null)
+      }
+      if (next === 'completed') {
+        clearBookmark(articleId)
+        setBookmark(null)
+        setProgress(null)
+        setDetail('Lettura completata')
+      }
+      if (next === 'idle') {
+        setProgress(speechRef.current?.getProgress() ?? progress)
+      }
+    }
+
+    if (voice === 'jw' && audioUrl) {
+      const times = timeRangeForSelection(sentences, from, word, to, toWord)
+      if (!times) {
+        setStatus('error')
+        setDetail('Tempi audio non disponibili per questo brano.')
+        return
+      }
+      speechRef.current = await speakOriginalAudio({
+        url: audioUrl,
+        start: times.start,
+        end: times.end,
+        sentences,
+        rate,
+        onStatus,
+        onProgress(p) {
+          setProgress(p)
+        },
+      })
+      return
+    }
+
     speechRef.current = await speakSentences(sliced.texts, {
       sentenceIndexes: sliced.sentenceIndexes,
       firstWordOffset: sliced.firstWord,
@@ -342,23 +416,7 @@ export function ArticleNarration({
         if (voice === 'personal') audioChunksRef.current = [blob]
         else audioChunksRef.current.push(blob)
       },
-      onStatus(next, info) {
-        setStatus(next)
-        if (info) setDetail(info)
-        if (next === 'paused' || next === 'speaking') {
-          persistFromProgress(speechRef.current?.getProgress() ?? null)
-        }
-        if (next === 'completed') {
-          clearBookmark(articleId)
-          setBookmark(null)
-          setProgress(null)
-          setDetail('Lettura completata')
-        }
-        // idle from stop/close: keep bookmark
-        if (next === 'idle') {
-          setProgress(speechRef.current?.getProgress() ?? progress)
-        }
-      },
+      onStatus,
       onProgress(p) {
         setProgress(p)
       },
@@ -441,7 +499,9 @@ export function ArticleNarration({
   const currentWord = progress?.wordIndex
 
   const statusLine = useMemo(() => {
-    if (status === 'loading') return 'Preparazione voce…'
+    if (status === 'loading') {
+      return voice === 'jw' ? 'Avvio audio JW.org…' : 'Preparazione voce…'
+    }
     if (status === 'speaking' && progress) {
       return `In lettura · frase ${progress.sentenceIndex + 1} di ${sentences.length}`
     }
@@ -451,7 +511,7 @@ export function ArticleNarration({
     if (status === 'completed') return detail || 'Lettura completata'
     if (detail) return detail
     return ''
-  }, [status, progress, pausedHere, sentences, detail])
+  }, [status, progress, pausedHere, sentences, detail, voice])
 
   return (
     <div className="article-narration" role="region" aria-label="Lettura articolo">
@@ -514,10 +574,17 @@ export function ArticleNarration({
                   speechRef.current?.stop()
                   const next = e.target.value as NarrationVoiceId
                   setVoice(next)
-                  try { localStorage.setItem('jw-narrator', next) } catch { /* session only */ }
+                  setStatus('idle')
+                  setDetail('')
+                  if (next !== 'jw') {
+                    try { localStorage.setItem('jw-narrator', next) } catch { /* session only */ }
+                  }
                 }}
                 disabled={status === 'loading' || status === 'speaking'}
               >
+                {hasOriginal && (
+                  <option value="jw">Audio JW.org (originale)</option>
+                )}
                 {NARRATION_VOICES.map((v) => (
                   <option key={v.id} value={v.id}>
                     {v.label}
@@ -525,6 +592,11 @@ export function ArticleNarration({
                 ))}
               </select>
             </label>
+            {voice === 'jw' && (
+              <p className="section-lede">
+                Ascolti la registrazione ufficiale JW.org dal punto che scegli, frase per frase.
+              </p>
+            )}
             {voice === 'personal' && <fieldset disabled={status === 'loading' || status === 'speaking' || status === 'paused'}>
               <legend>Il tuo memo vocale</legend>
               <p>Premendo Ascolta, il memo e il testo selezionato vengono inviati alla demo pubblica Chatterbox. La demo può avere code o limiti di utilizzo.</p>
@@ -637,9 +709,16 @@ export function ArticleNarration({
             {transcript === undefined && <button type="button" className="btn ghost small" onClick={() => void shareRange()}>
               Condividi brano
             </button>}
-            <button type="button" className="btn ghost small" onClick={downloadAudio}>
-              {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica audio'}
-            </button>
+            {voice !== 'jw' && (
+              <button type="button" className="btn ghost small" onClick={downloadAudio}>
+                {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica audio'}
+              </button>
+            )}
+            {voice === 'jw' && audioUrl && (
+              <a className="btn ghost small" href={audioUrl} target="_blank" rel="noreferrer">
+                Apri MP3 JW.org ↗
+              </a>
+            )}
           </div>
 
           {status !== 'error' && statusLine && (

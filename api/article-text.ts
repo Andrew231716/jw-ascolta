@@ -53,6 +53,37 @@ async function resolveDocid(docid: string): Promise<string | null> {
   }
 }
 
+function extractBodyHtml(html: string): string {
+  const opening = /<div\b[^>]*\bclass=["'][^"']*\bbodyTxt\b[^"']*["'][^>]*>/i.exec(html)
+  if (!opening) return html
+  const start = opening.index + opening[0].length
+  const tags = /<\/?div\b[^>]*>/gi
+  tags.lastIndex = start
+  let depth = 1
+  let tag
+  while ((tag = tags.exec(html))) {
+    depth += tag[0][1] === '/' ? -1 : 1
+    if (depth === 0) return html.slice(start, tag.index)
+  }
+  return html.slice(start)
+}
+
+/** Paragraphs with JW MEPS ids (data-pid / id=pN) for audio marker sync. */
+function extractParagraphs(html: string): Array<{ pid: number; text: string }> {
+  const body = extractBodyHtml(html)
+  const out: Array<{ pid: number; text: string }> = []
+  for (const match of body.matchAll(/<p\b([^>]*)>([\s\S]*?)<\/p>/gi)) {
+    const attrs = match[1] || ''
+    const pidMatch =
+      attrs.match(/\bdata-pid=["']?(\d+)/i) || attrs.match(/\bid=["']p(\d+)/i)
+    if (!pidMatch) continue
+    const text = strip(match[2])
+    if (!text) continue
+    out.push({ pid: Number(pidMatch[1]), text })
+  }
+  return out
+}
+
 /**
  * Extracts readable Italian article text from JW.org for on-device TTS.
  * Query: path=/it/.../ or url=https://www.jw.org/it/... or docid=1102…
@@ -110,28 +141,29 @@ export default async function handler(request: Request): Promise<Response> {
     const titleMatch = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)
     const title = titleMatch ? strip(titleMatch[1]) : ''
 
-    let body = ''
-    const opening = /<div\b[^>]*\bclass=["'][^"']*\bbodyTxt\b[^"']*["'][^>]*>/i.exec(html)
-    if (opening) {
-      const start = opening.index + opening[0].length
-      const tags = /<\/?div\b[^>]*>/gi
-      tags.lastIndex = start
-      let depth = 1
-      let tag
-      while ((tag = tags.exec(html))) {
-        depth += tag[0][1] === '/' ? -1 : 1
-        if (depth === 0) {
-          body = strip(html.slice(start, tag.index))
-          break
+    const paragraphs = extractParagraphs(html)
+    let body = paragraphs.map((item) => item.text).join('\n\n')
+    if (!body) {
+      const opening = /<div\b[^>]*\bclass=["'][^"']*\bbodyTxt\b[^"']*["'][^>]*>/i.exec(html)
+      if (opening) {
+        const start = opening.index + opening[0].length
+        const tags = /<\/?div\b[^>]*>/gi
+        tags.lastIndex = start
+        let depth = 1
+        let tag
+        while ((tag = tags.exec(html))) {
+          depth += tag[0][1] === '/' ? -1 : 1
+          if (depth === 0) {
+            body = strip(html.slice(start, tag.index))
+            break
+          }
         }
       }
     }
     if (!body) {
-      const paragraphs = Array.from(
-        html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi),
-        (m) => strip(m[1]),
-      ).filter(Boolean)
-      body = paragraphs.join('\n\n')
+      body = Array.from(html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi), (m) => strip(m[1]))
+        .filter(Boolean)
+        .join('\n\n')
     }
 
     if (!title && !body) {
@@ -142,6 +174,7 @@ export default async function handler(request: Request): Promise<Response> {
       {
         title,
         text: body,
+        paragraphs,
         source: site + path,
         truncated: false,
         chars: body.length,

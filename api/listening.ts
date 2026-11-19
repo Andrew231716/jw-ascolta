@@ -5,6 +5,8 @@ const cdn = 'https://b.jw-cdn.org'
 const articles = '/it/biblioteca-digitale/articoli/'
 const bible = '/it/cosa-dice-la-Bibbia/'
 
+type AudioMarker = { pid: number; start: number; end: number }
+
 type LibraryTrack = {
   id: string
   title: string
@@ -19,6 +21,36 @@ type LibraryTrack = {
   docid?: string
   /** True when the track has a page we can open for frase-a-frase. */
   canRead?: boolean
+  /** Paragraph timing markers for original JW MP3 phrase sync. */
+  markers?: AudioMarker[]
+}
+
+function parseTimecode(value: string): number {
+  const match = String(value || '').match(/^(\d+):(\d+):(\d+(?:\.\d+)?)$/)
+  if (!match) return 0
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3])
+}
+
+function extractMarkers(file: {
+  markers?: {
+    markers?: Array<{
+      mepsParagraphId?: number | string
+      startTime?: string
+      duration?: string
+    }>
+  }
+}): AudioMarker[] {
+  const list = file.markers?.markers
+  if (!Array.isArray(list)) return []
+  return list
+    .map((item) => {
+      const pid = Number(item.mepsParagraphId)
+      const start = parseTimecode(String(item.startTime || ''))
+      const duration = parseTimecode(String(item.duration || ''))
+      if (!Number.isFinite(pid) || pid <= 0 || !Number.isFinite(start)) return null
+      return { pid, start, end: start + Math.max(0, duration) }
+    })
+    .filter((item): item is AudioMarker => Boolean(item))
 }
 
 type PendingItem = {
@@ -544,14 +576,20 @@ async function fetchArticleAudio(docid: string) {
   if (!response.ok) throw new Error('Audio non verificato')
   const data = await response.json()
   const file = data.files?.I?.MP3?.find(
-    (item: { mimetype?: string; file?: { url?: string }; title?: string; duration?: number }) =>
-      item.mimetype === 'audio/mpeg' && item.file?.url?.startsWith('https://'),
+    (item: {
+      mimetype?: string
+      file?: { url?: string }
+      title?: string
+      duration?: number
+      markers?: { markers?: Array<{ mepsParagraphId?: number; startTime?: string; duration?: string }> }
+    }) => item.mimetype === 'audio/mpeg' && item.file?.url?.startsWith('https://'),
   )
   return file
     ? {
         title: String(file.title || ''),
         url: String(file.file.url),
         duration: Number(file.duration ?? 0),
+        markers: extractMarkers(file),
       }
     : null
 }
@@ -637,6 +675,7 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
           matchIn: meta.matchIn,
           docid: id,
           canRead: true,
+          markers: file.markers,
         } satisfies LibraryTrack,
       }
     }),
@@ -723,6 +762,7 @@ async function catalogPubTracks(
     track?: number
     file?: { url?: string }
     mimetype?: string
+    markers?: { markers?: Array<{ mepsParagraphId?: number; startTime?: string; duration?: string }> }
   }> = data.files?.I?.MP3 ?? []
   files = files.filter(
     (item) =>
@@ -734,6 +774,7 @@ async function catalogPubTracks(
   return {
     tracks: slice.map((item, index) => {
       const link = chapterSource(pub, item.docid)
+      const markers = extractMarkers(item)
       return {
         id: `pub-${pub}-` + (item.docid || item.track || 'x') + '-' + (item.track || index),
         title: String(item.title || topicName),
@@ -743,6 +784,7 @@ async function catalogPubTracks(
         source: link.source,
         docid: link.docid,
         canRead: link.canRead,
+        markers: markers.length ? markers : undefined,
         matchIn: query ? 'Nel titolo' : undefined,
       }
     }),
@@ -881,16 +923,29 @@ async function pubTracks(
             title?: string
             duration?: number
             track?: number
+            docid?: number
             file?: { url?: string }
-          }): LibraryTrack => ({
-            id: `pub-${pub}-${issue}-${item.track || item.title}`,
-            title: String(item.title || `${pub} ${issue}`),
-            url: String(item.file!.url),
-            duration: Number(item.duration ?? 0),
-            topics: [topicName, String(data.formattedDate || issue)],
-            source: site + '/it/biblioteca-digitale/riviste/',
-            matchIn: query ? 'Nel titolo' : undefined,
-          }),
+            markers?: {
+              markers?: Array<{ mepsParagraphId?: number; startTime?: string; duration?: string }>
+            }
+          }): LibraryTrack => {
+            const markers = extractMarkers(item)
+            const docid = item.docid ? String(item.docid) : undefined
+            return {
+              id: `pub-${pub}-${issue}-${item.track || item.title}`,
+              title: String(item.title || `${pub} ${issue}`),
+              url: String(item.file!.url),
+              duration: Number(item.duration ?? 0),
+              topics: [topicName, String(data.formattedDate || issue)],
+              source: docid
+                ? `${site}/finder?wtlocale=I&docid=${docid}&prefer=lang`
+                : site + '/it/biblioteca-digitale/riviste/',
+              docid,
+              canRead: Boolean(docid),
+              markers: markers.length ? markers : undefined,
+              matchIn: query ? 'Nel titolo' : undefined,
+            }
+          },
         )
     }),
   )

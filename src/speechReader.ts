@@ -1,5 +1,5 @@
 import { personalRenderer } from './personalVoice'
-import { chunkForTts } from './articleText'
+import type { ArticleSentence } from './articleText'
 import { onPauseNarration, requestPauseMusic } from './audioBus'
 
 /** Voce narrativa neurale cloud — non quella del dispositivo. */
@@ -11,7 +11,7 @@ export type SpeechStatus =
   | 'paused'
   | 'error'
   | 'completed'
-export type NarrationVoiceId = 'isabella' | 'elsa' | 'diego' | 'giuseppe' | 'personal'
+export type NarrationVoiceId = 'jw' | 'isabella' | 'elsa' | 'diego' | 'giuseppe' | 'personal'
 export type NarrationRate = '-15%' | '-8%' | '+0%' | '+10%'
 
 export const NARRATION_VOICES: Array<{ id: NarrationVoiceId; label: string }> = [
@@ -141,11 +141,69 @@ async function fetchNeuralChunk(
 }
 
 function voiceLabel(id: NarrationVoiceId): string {
+  if (id === 'jw') return 'Audio JW.org'
   return NARRATION_VOICES.find((v) => v.id === id)?.label || id
 }
 
-function countWords(text: string): number {
-  return text.split(/\s+/).filter(Boolean).length
+function rateToPlayback(rate: NarrationRate): number {
+  const n = Number.parseInt(rate, 10)
+  return Number.isFinite(n) ? 1 + n / 100 : 1
+}
+
+type QueueItem = {
+  text: string
+  /** Absolute word index at the start of this clip. */
+  wordBase: number
+  wordsInClip: number
+  /** Map local word → sentence index for live highlight. */
+  sentenceAtWord: number[]
+}
+
+/**
+ * Join selected sentences into continuous TTS clips (few large blobs)
+ * so playback has no pause between every sentence.
+ */
+function buildContinuousQueue(
+  texts: string[],
+  sentenceIndexes: number[],
+  firstWordOffset: number,
+  maxLen: number,
+): QueueItem[] {
+  type WordRef = { word: string; sentenceIndex: number }
+  const words: WordRef[] = []
+  texts.forEach((text, i) => {
+    const parts = text.split(/\s+/).filter(Boolean)
+    const sentenceIndex = sentenceIndexes[i] ?? i
+    parts.forEach((word, wi) => {
+      if (i === 0 && wi < firstWordOffset) return
+      words.push({ word, sentenceIndex })
+    })
+  })
+  if (!words.length) return []
+
+  const queue: QueueItem[] = []
+  let cursor = 0
+  while (cursor < words.length) {
+    let end = cursor
+    let length = 0
+    while (end < words.length) {
+      const nextLen = length + words[end].word.length + (length ? 1 : 0)
+      if (length > 0 && nextLen > maxLen) break
+      length = nextLen
+      end += 1
+      if (length >= maxLen) break
+    }
+    if (end === cursor) end = cursor + 1
+    const slice = words.slice(cursor, end)
+    queue.push({
+      text: slice.map((item) => item.word).join(' '),
+      wordBase: cursor === 0 ? firstWordOffset : firstWordOffset + cursor,
+      wordsInClip: slice.length,
+      sentenceAtWord: slice.map((item) => item.sentenceIndex),
+    })
+    cursor = end
+  }
+  return queue
 }
 
 export async function speakSentences(
@@ -171,16 +229,13 @@ export async function speakSentences(
   } = opts
 
   const controller = new AbortController()
-  const render = voice === 'personal' ? personalRenderer(controller.signal)
-    : (text: string) => fetchNeuralChunk(text, voice, rate, controller.signal)
-  const queue = texts.flatMap((text, i) => {
-    let offset = i === 0 ? firstWordOffset : 0
-    return chunkForTts(text, voice === 'personal' ? 300 : 1800).map(piece => {
-      const item = { text: piece, sentenceIndex: sentenceIndexes[i] ?? i, offset }
-      offset += countWords(piece)
-      return item
-    })
-  })
+  const render =
+    voice === 'personal'
+      ? personalRenderer(controller.signal)
+      : (text: string) => fetchNeuralChunk(text, voice, rate, controller.signal)
+
+  const maxLen = voice === 'personal' ? 300 : 1800
+  const queue = buildContinuousQueue(texts, sentenceIndexes, firstWordOffset, maxLen)
 
   if (!queue.length) {
     onStatus?.('error', 'Testo vuoto.')
@@ -196,12 +251,13 @@ export async function speakSentences(
   let currentUrl: string | null = null
   let playIndex = 0
   let currentWord = firstWordOffset
+  let currentSentence = queue[0]?.sentenceAtWord[0] ?? sentenceIndexes[0] ?? 0
   let finished = false
 
   const progressNow = (): SpeakProgress | null => {
     if (finished || !queue.length || playIndex >= queue.length) return null
     return {
-      sentenceIndex: queue[playIndex].sentenceIndex,
+      sentenceIndex: currentSentence,
       wordIndex: currentWord,
       queueIndex: playIndex,
       queueLength: queue.length,
@@ -253,7 +309,7 @@ export async function speakSentences(
     }
   }
 
-  const playBlob = (blob: Blob, wordsInClip: number, wordBase: number) =>
+  const playBlob = (blob: Blob, item: QueueItem) =>
     new Promise<'ok' | 'error'>((resolve) => {
       if (aborted) {
         resolve('ok')
@@ -262,7 +318,8 @@ export async function speakSentences(
       revokeCurrent()
       const url = URL.createObjectURL(blob)
       currentUrl = url
-      currentWord = wordBase
+      currentWord = item.wordBase
+      currentSentence = item.sentenceAtWord[0] ?? currentSentence
       emitProgress()
 
       let settled = false
@@ -282,15 +339,19 @@ export async function speakSentences(
       audioEl.ontimeupdate = () => {
         if (!audioEl.duration || !Number.isFinite(audioEl.duration)) return
         const ratio = Math.min(1, Math.max(0, audioEl.currentTime / audioEl.duration))
-        const local = Math.min(wordsInClip - 1, Math.floor(ratio * wordsInClip))
-        currentWord = wordBase + local
+        const local = Math.min(
+          item.wordsInClip - 1,
+          Math.floor(ratio * item.wordsInClip),
+        )
+        currentWord = item.wordBase + local
+        currentSentence = item.sentenceAtWord[local] ?? currentSentence
         emitProgress()
       }
       audioEl.onended = () => done('ok')
       audioEl.onerror = () => done('error')
       audioEl.muted = false
       audioEl.src = url
-      audioEl.playbackRate = voice === 'personal' ? 1 + parseInt(rate) / 100 : 1
+      audioEl.playbackRate = voice === 'personal' ? rateToPlayback(rate) : 1
 
       void audioEl.play().then(
         () => {
@@ -310,30 +371,32 @@ export async function speakSentences(
 
   const run = async () => {
     try {
-      let prefetch: Promise<Blob> | null = render(queue[0].text)
+      // Prefetch first two clips so the second starts with no wait.
+      const blobs: Array<Promise<Blob> | null> = queue.map(() => null)
+      blobs[0] = render(queue[0].text)
+      if (queue.length > 1) blobs[1] = render(queue[1].text)
 
       for (let i = 0; i < queue.length; i += 1) {
         if (aborted) return
         playIndex = i
-        currentWord = queue[i].offset
+        currentWord = queue[i].wordBase
+        currentSentence = queue[i].sentenceAtWord[0] ?? currentSentence
         emitProgress()
 
-        const blob = await (prefetch ?? render(queue[i].text))
-        prefetch = null
+        const blob = await (blobs[i] ?? render(queue[i].text))
+        blobs[i] = null
         if (aborted) return
         onChunkReady?.(blob, i)
 
-        if (i + 1 < queue.length) {
-          prefetch = render(queue[i + 1].text)
-          void prefetch.catch(() => {})
+        if (i + 2 < queue.length && !blobs[i + 2]) {
+          blobs[i + 2] = render(queue[i + 2].text)
+          void blobs[i + 2]!.catch(() => {})
         }
 
         await waitIfPaused()
         if (aborted) return
 
-        const wordsInClip = countWords(queue[i].text) || 1
-        const wordBase = queue[i].offset
-        const result = await playBlob(blob, wordsInClip, wordBase)
+        const result = await playBlob(blob, queue[i])
         if (aborted) return
         if (result === 'error') {
           controller.abort()
@@ -341,8 +404,6 @@ export async function speakSentences(
           onStatus?.('error', 'Errore audio su questa frase. Riprova o salta avanti.')
           return
         }
-        await waitIfPaused()
-        if (aborted) return
       }
 
       if (!aborted) {
@@ -359,7 +420,6 @@ export async function speakSentences(
       )
     }
   }
-
 
   const handle: SpeakHandle = {
     stop(opts) {
@@ -400,6 +460,205 @@ export async function speakSentences(
     getProgress: () => progressNow(),
   }
   activeNarrationPause = handle.pause
+  void run()
+  return handle
+}
+
+/** Play a JW.org MP3 range with live sentence highlight from markers. */
+export async function speakOriginalAudio(opts: {
+  url: string
+  start: number
+  end: number
+  sentences: ArticleSentence[]
+  rate?: NarrationRate
+  onStatus?: (status: SpeechStatus, detail?: string) => void
+  onProgress?: (progress: SpeakProgress) => void
+}): Promise<SpeakHandle> {
+  const { url, start, end, sentences, rate = '+0%', onStatus, onProgress } = opts
+  const audioEl = ensureAudioElement()
+  const controller = new AbortController()
+  let aborted = false
+  let finished = false
+  let pausedGate: Promise<void> | null = null
+  let resumeGate: (() => void) | null = null
+  let currentSentence = 0
+  let currentWord = 0
+
+  const timed = sentences.filter(
+    (item) => item.startTime != null && item.endTime != null && item.endTime > item.startTime!,
+  )
+  const findAt = (time: number) => {
+    for (let i = 0; i < timed.length; i += 1) {
+      const s = timed[i]
+      if (time >= (s.startTime ?? 0) && time < (s.endTime ?? 0)) {
+        const span = Math.max(0.01, (s.endTime ?? 0) - (s.startTime ?? 0))
+        const ratio = (time - (s.startTime ?? 0)) / span
+        const wordIndex = Math.min(
+          Math.max(0, s.words.length - 1),
+          Math.floor(ratio * s.words.length),
+        )
+        return { sentenceIndex: s.index, wordIndex }
+      }
+    }
+    const last = timed[timed.length - 1]
+    return {
+      sentenceIndex: last?.index ?? 0,
+      wordIndex: Math.max(0, (last?.words.length ?? 1) - 1),
+    }
+  }
+
+  const progressNow = (): SpeakProgress | null => {
+    if (finished) return null
+    return {
+      sentenceIndex: currentSentence,
+      wordIndex: currentWord,
+      queueIndex: 0,
+      queueLength: 1,
+    }
+  }
+
+  const emitProgress = () => {
+    const p = progressNow()
+    if (p) onProgress?.(p)
+  }
+
+  const cleanup = () => {
+    try {
+      audioEl.ontimeupdate = null
+      audioEl.onended = null
+      audioEl.onerror = null
+      audioEl.pause()
+    } catch {
+      /* ignore */
+    }
+    if (activeNarrationPause === handle.pause) activeNarrationPause = null
+  }
+
+  requestPauseMusic()
+  onStatus?.('loading', voiceLabel('jw'))
+
+  const at = findAt(start)
+  currentSentence = at.sentenceIndex
+  currentWord = at.wordIndex
+  emitProgress()
+
+  const handle: SpeakHandle = {
+    stop(opts) {
+      aborted = true
+      finished = true
+      controller.abort()
+      cleanup()
+      onStatus?.(opts?.completed ? 'completed' : 'idle')
+    },
+    pause() {
+      if (!audioEl.paused) audioEl.pause()
+      if (!pausedGate) {
+        pausedGate = new Promise<void>((resolve) => {
+          resumeGate = resolve
+        })
+      }
+      onStatus?.('paused', voiceLabel('jw'))
+      emitProgress()
+    },
+    resume() {
+      if (aborted) return
+      requestPauseMusic()
+      if (resumeGate) {
+        resumeGate()
+        resumeGate = null
+        pausedGate = null
+      }
+      void audioEl.play().then(
+        () => {
+          if (aborted || pausedGate) return
+          onStatus?.('speaking', voiceLabel('jw'))
+          emitProgress()
+        },
+        () => onStatus?.('paused', 'Tocca di nuovo per ascoltare'),
+      )
+    },
+    getProgress: () => progressNow(),
+  }
+  activeNarrationPause = handle.pause
+
+  const run = async () => {
+    try {
+      audioEl.muted = false
+      audioEl.playbackRate = rateToPlayback(rate)
+      if (audioEl.src !== url) {
+        audioEl.src = url
+        audioEl.load()
+      }
+      await new Promise<void>((resolve, reject) => {
+        if (audioEl.readyState >= 1) {
+          resolve()
+          return
+        }
+        const ok = () => {
+          audioEl.removeEventListener('loadedmetadata', ok)
+          audioEl.removeEventListener('error', fail)
+          resolve()
+        }
+        const fail = () => {
+          audioEl.removeEventListener('loadedmetadata', ok)
+          audioEl.removeEventListener('error', fail)
+          reject(new Error('Audio JW.org non caricabile.'))
+        }
+        audioEl.addEventListener('loadedmetadata', ok, { once: true })
+        audioEl.addEventListener('error', fail, { once: true })
+      })
+      if (aborted) return
+
+      audioEl.ontimeupdate = () => {
+        if (aborted) return
+        const t = audioEl.currentTime
+        if (t >= end - 0.05) {
+          audioEl.pause()
+          finished = true
+          cleanup()
+          onStatus?.('completed')
+          return
+        }
+        const hit = findAt(t)
+        currentSentence = hit.sentenceIndex
+        currentWord = hit.wordIndex
+        emitProgress()
+      }
+      audioEl.onended = () => {
+        if (aborted) return
+        finished = true
+        cleanup()
+        onStatus?.('completed')
+      }
+      audioEl.onerror = () => {
+        if (aborted) return
+        cleanup()
+        onStatus?.('error', 'Errore audio JW.org.')
+      }
+
+      audioEl.currentTime = Math.max(0, start)
+      void audioEl.play().then(
+        () => {
+          if (aborted || pausedGate) return
+          onStatus?.('speaking', voiceLabel('jw'))
+          emitProgress()
+        },
+        () => {
+          if (aborted) return
+          onStatus?.('paused', 'Tocca di nuovo per ascoltare')
+          emitProgress()
+        },
+      )
+    } catch (err) {
+      if (aborted) return
+      cleanup()
+      onStatus?.(
+        'error',
+        err instanceof Error ? err.message : 'Audio JW.org non disponibile.',
+      )
+    }
+  }
+
   void run()
   return handle
 }

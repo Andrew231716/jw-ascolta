@@ -13,6 +13,7 @@ type Kind = 'articles' | 'videos'
 type BrowseKind = 'book' | 'magazine' | 'articles' | 'videos'
 type BrowseItem = { id: string; name: string; kind: BrowseKind }
 type BrowseSection = { id: string; name: string; hint: string; items: BrowseItem[] }
+type AudioMarker = { pid: number; start: number; end: number }
 type Entry = Track & {
   source: string
   topics: string[]
@@ -21,6 +22,7 @@ type Entry = Track & {
   subtitleUrl?: string
   docid?: string
   canRead?: boolean
+  markers?: AudioMarker[]
 }
 type Pending = {
   id: string
@@ -36,7 +38,14 @@ type Page = {
   failed?: number
 }
 
-type ReaderTarget = { id: string; title: string; source: string }
+type ReaderTarget = {
+  id: string
+  title: string
+  source: string
+  audioUrl?: string
+  markers?: AudioMarker[]
+  audioDuration?: number
+}
 type VideoReaderTarget = Entry & { subtitleUrl: string }
 
 type Crumb = { label: string; action?: () => void }
@@ -341,6 +350,9 @@ export function ListeningLibrary({
           articleId={reader.id}
           title={reader.title}
           source={reader.source}
+          audioUrl={reader.audioUrl}
+          markers={reader.markers}
+          audioDuration={reader.audioDuration}
           onClose={() => {
             setReader(null)
             setBookmarkTick((n) => n + 1)
@@ -693,6 +705,9 @@ export function ListeningLibrary({
                                 id: track.id,
                                 title: track.title,
                                 source: track.source,
+                                audioUrl: track.url,
+                                markers: track.markers,
+                                audioDuration: track.duration,
                               })
                             }
                           >

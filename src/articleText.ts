@@ -10,6 +10,133 @@ export type ArticleSentence = {
   index: number
   text: string
   words: ArticleWord[]
+  /** Seconds in original JW MP3 when markers are available. */
+  startTime?: number
+  endTime?: number
+  pid?: number
+}
+
+export type AudioMarker = { pid: number; start: number; end: number }
+
+export type ArticleParagraph = { pid: number; text: string }
+
+/** Build sentences with optional JW audio timing from paragraph markers. */
+export function sentencesFromParagraphs(
+  paragraphs: ArticleParagraph[],
+  markers: AudioMarker[] = [],
+  fallbackDuration = 0,
+): ArticleSentence[] {
+  if (!paragraphs.length) return []
+  const byPid = new Map(markers.map((item) => [item.pid, item]))
+  const hasMarkers = markers.length > 0
+  const totalChars =
+    paragraphs.reduce((sum, item) => sum + item.text.length, 0) || 1
+  let cursor = 0
+  let index = 0
+  const out: ArticleSentence[] = []
+
+  for (const para of paragraphs) {
+    const units = splitSentences(para.text)
+    if (!units.length) continue
+    const marker = byPid.get(para.pid)
+    const paraChars = units.reduce((sum, item) => sum + item.text.length, 0) || 1
+    let paraStart: number
+    let paraEnd: number
+    if (marker) {
+      paraStart = marker.start
+      paraEnd = Math.max(marker.start, marker.end)
+    } else if (hasMarkers) {
+      // Paragraph without a marker: keep zero-width so sync skips it.
+      paraStart = cursor
+      paraEnd = cursor
+    } else if (fallbackDuration > 0) {
+      paraStart = (cursor / totalChars) * fallbackDuration
+      paraEnd = ((cursor + para.text.length) / totalChars) * fallbackDuration
+    } else {
+      paraStart = 0
+      paraEnd = 0
+    }
+    cursor += para.text.length
+    const span = Math.max(0, paraEnd - paraStart)
+    let local = 0
+    for (const unit of units) {
+      const share = unit.text.length / paraChars
+      const startTime = paraStart + span * local
+      local += share
+      const endTime = paraStart + span * local
+      out.push({
+        index,
+        text: unit.text,
+        words: unit.words.map((word) => ({ ...word, sentenceIndex: index })),
+        startTime,
+        endTime,
+        pid: para.pid,
+      })
+      index += 1
+    }
+  }
+  return out
+}
+
+/** Evenly map sentences onto a full MP3 when paragraph markers are missing. */
+export function assignProportionalTimes(
+  sentences: ArticleSentence[],
+  duration: number,
+): ArticleSentence[] {
+  if (!sentences.length || !(duration > 0)) return sentences
+  const total = sentences.reduce((sum, item) => sum + item.text.length, 0) || 1
+  let cursor = 0
+  return sentences.map((item) => {
+    const startTime = (cursor / total) * duration
+    cursor += item.text.length
+    const endTime = (cursor / total) * duration
+    return { ...item, startTime, endTime }
+  })
+}
+
+/** Start/end seconds for a sentence (and optional word) selection. */
+export function timeRangeForSelection(
+  sentences: ArticleSentence[],
+  startSentence: number,
+  startWord: number,
+  endSentence: number | null,
+  endWord: number | null,
+): { start: number; end: number } | null {
+  if (!sentences.length) return null
+  const from = Math.max(0, Math.min(startSentence, sentences.length - 1))
+  const to =
+    endSentence === null
+      ? sentences.length - 1
+      : Math.max(from, Math.min(endSentence, sentences.length - 1))
+  const first = sentences[from]
+  const last = sentences[to]
+  if (
+    first?.startTime == null ||
+    first?.endTime == null ||
+    last?.startTime == null ||
+    last?.endTime == null
+  ) {
+    return null
+  }
+  const wordRatio = (sentence: ArticleSentence, wordIndex: number, atEnd: boolean) => {
+    const count = Math.max(1, sentence.words.length)
+    if (atEnd) {
+      return Math.min(1, (Math.min(wordIndex, count - 1) + 1) / count)
+    }
+    return Math.min(1, Math.max(0, wordIndex) / count)
+  }
+  const start =
+    first.startTime +
+    (first.endTime - first.startTime) * wordRatio(first, startWord, false)
+  const end =
+    endWord === null
+      ? last.endTime
+      : last.startTime +
+        (last.endTime - last.startTime) * wordRatio(last, endWord, true)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    return { start: first.startTime, end: Math.max(first.endTime, last.endTime) }
+  }
+  return { start, end }
 }
 
 export type NarrationBookmark = {
