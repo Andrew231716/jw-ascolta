@@ -1871,3 +1871,4 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .mini-player, .narration-dock { bottom: calc(6rem + env(safe-area-inset-bottom)); }
 }
 .music-only-tools { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.article-narration.reading .narration-text-prompt { display: none; }
