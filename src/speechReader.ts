@@ -95,6 +95,7 @@ export function primeNarrationAudio(): void {
 }
 
 let activeNarrationPause: (() => void) | null = null
+let narrationWindow: { start: number; end: number } | null = null
 
 /** Stop Isabella / neural TTS without destroying the shared element. */
 export function pauseNarrationAudio(): void {
@@ -229,6 +230,7 @@ export async function speakSentences(
     onChunkReady,
   } = opts
 
+  narrationWindow = null
   const controller = new AbortController()
   const render =
     voice === 'personal'
@@ -480,6 +482,7 @@ export async function speakOriginalAudio(opts: {
   onProgress?: (progress: SpeakProgress) => void
 }): Promise<SpeakHandle> {
   const { url, start, end, sentences, rate = '+0%', onStatus, onProgress } = opts
+  narrationWindow = { start, end }
   const audioEl = ensureAudioElement()
   const controller = new AbortController()
   let aborted = false
@@ -528,6 +531,9 @@ export async function speakOriginalAudio(opts: {
   }
 
   const cleanup = () => {
+    resumeGate?.()
+    resumeGate = null
+    pausedGate = null
     try {
       audioEl.ontimeupdate = null
       audioEl.onended = null
@@ -599,16 +605,17 @@ export async function speakOriginalAudio(opts: {
           resolve()
           return
         }
-        const ok = () => {
+        const clear = () => {
+          window.clearTimeout(timeout)
+          controller.signal.removeEventListener('abort', cancel)
           audioEl.removeEventListener('loadedmetadata', ok)
           audioEl.removeEventListener('error', fail)
-          resolve()
         }
-        const fail = () => {
-          audioEl.removeEventListener('loadedmetadata', ok)
-          audioEl.removeEventListener('error', fail)
-          reject(new Error('Audio JW.org non caricabile.'))
-        }
+        const ok = () => { clear(); resolve() }
+        const fail = () => { clear(); reject(new Error('Audio JW.org non caricabile. Riprova.')) }
+        const cancel = () => { clear(); reject(new DOMException('Annullato', 'AbortError')) }
+        const timeout = window.setTimeout(fail, 30000)
+        controller.signal.addEventListener('abort', cancel, { once: true })
         audioEl.addEventListener('loadedmetadata', ok, { once: true })
         audioEl.addEventListener('error', fail, { once: true })
       })
@@ -642,6 +649,8 @@ export async function speakOriginalAudio(opts: {
       }
 
       audioEl.currentTime = Math.max(0, start)
+      if (pausedGate) await pausedGate
+      if (aborted) return
       void audioEl.play().then(
         () => {
           if (aborted || pausedGate) return
@@ -690,5 +699,7 @@ export async function speakArticle(
 export function skipNarrationAudio(seconds: number) {
   const audio = primedAudio
   if (!audio || !Number.isFinite(audio.duration)) return
-  audio.currentTime = Math.max(0, Math.min(audio.duration, audio.currentTime + seconds))
+  const floor = narrationWindow?.start || 0
+  const ceiling = Math.min(audio.duration, narrationWindow?.end ?? audio.duration)
+  audio.currentTime = Math.max(floor, Math.min(ceiling, audio.currentTime + seconds))
 }
