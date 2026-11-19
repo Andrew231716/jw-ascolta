@@ -1,4 +1,4 @@
-import { forgetVoiceSample, hasVoiceSample, saveVoiceSample } from './personalVoice'
+import { hasPersonalVoiceToken, setPersonalVoiceToken, forgetVoiceSample, hasVoiceSample, saveVoiceSample } from './personalVoice'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearBookmark,
@@ -56,6 +56,8 @@ export function ArticleNarration({
     try { return NARRATION_VOICES.find(v => v.id === localStorage.getItem('jw-narrator'))?.id ?? 'isabella' } catch { return 'isabella' }
   })
   const [sampleReady, setSampleReady] = useState(hasVoiceSample)
+  const tokenField = useRef<HTMLInputElement>(null)
+  const [tokenSet, setTokenSet] = useState(hasPersonalVoiceToken)
   const [sampleError, setSampleError] = useState('')
   const [rate, setRate] = useState<NarrationRate>('-8%')
   const [status, setStatus] = useState<SpeechStatus>('idle')
@@ -525,6 +527,27 @@ export function ArticleNarration({
               {sampleReady && <button type="button" className="btn ghost" onClick={() => {
                 forgetVoiceSample(); setSampleReady(false)
               }}>Rimuovi memo dal dispositivo</button>}
+              <details>
+                <summary>Quota del mio account Hugging Face</summary>
+                <p>Il token viene usato solo per Chatterbox e viene dimenticato ricaricando la pagina.</p>
+                <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Gestisci token su Hugging Face</a>
+                {tokenSet ? <button type="button" className="btn ghost" onClick={() => {
+                  setPersonalVoiceToken(''); setTokenSet(false)
+                }}>Scollega account</button> : <div><label>Token personale
+                  <input type="password" autoComplete="off" autoCapitalize="none" spellCheck={false}
+                    ref={tokenField} />
+                  </label>
+                  <button type="button" className="btn ghost" onClick={() => {
+                      const value = tokenField.current?.value.trim()
+                      if (!value) return
+                      if (!/^hf_[a-zA-Z0-9]+$/.test(value)) {
+                        setSampleError('Inserisci un token Hugging Face che inizi con hf_.')
+                        return
+                      }
+                      setPersonalVoiceToken(value); setTokenSet(true); setSampleError('')
+                    }}>Usa token</button>
+                </div>}
+              </details>
               {sampleError && <p role="alert">{sampleError}</p>}
             </fieldset>}
             <label>
@@ -605,7 +628,7 @@ export function ArticleNarration({
             </button>
           </div>
 
-          {statusLine && (
+          {status !== 'error' && statusLine && (
             <p className="narration-status" role="status">
               {statusLine}
             </p>

@@ -3,6 +3,30 @@ const key = 'jw-ascolta.personal-voice.v1'
 const origin = 'https://resembleai-chatterbox-multilingual-tts.hf.space'
 const api = origin + '/gradio_api'
 
+// Keep optional Hugging Face credentials in memory for this page only.
+let sessionToken = ''
+export function setPersonalVoiceToken(value: string) {
+  sessionToken = value.trim()
+}
+export function hasPersonalVoiceToken() {
+  return Boolean(sessionToken)
+}
+
+export function generationResult(events: string, eventId: string) {
+  for (const line of events.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue
+    const event = JSON.parse(line.slice(5))
+    if (event.event_id !== eventId || event.msg !== 'process_completed') continue
+    if (event.success && event.output?.data?.[0]) return event.output.data[0]
+    const error = String(event.output?.error || event.title || '')
+    if (/quota|runs limit/i.test(error)) {
+      throw new Error('Quota Chatterbox esaurita. Attendi il rinnovo oppure usa un account Hugging Face con quota disponibile.')
+    }
+    throw new Error('Chatterbox non ha potuto generare la frase. La posizione è disponibile per il prossimo tentativo.')
+  }
+  throw new Error('Collegamento a Chatterbox interrotto prima della risposta.')
+}
+
 export function hasVoiceSample() {
   try { return Boolean(localStorage.getItem(key)) } catch { return false }
 }
@@ -23,11 +47,16 @@ export async function saveVoiceSample(file: File) {
 }
 
 export function personalRenderer(signal: AbortSignal) {
+  const token = sessionToken
+  let functionIndex: number | undefined
   let uploaded: string | undefined
   return async (text: string) => {
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(180000)])
     const request = async (url: string, options?: RequestInit) => {
-      const response = await fetch(url, { ...options, signal: requestSignal })
+      const headers = new Headers(options?.headers)
+      if (token) headers.set('Authorization', 'Bearer ' + token)
+      const response = await fetch(url, { ...options, headers, signal: requestSignal })
+      if (response.status === 401 || response.status === 403) throw new Error('Hugging Face ha rifiutato l’accesso. Controlla il token inserito.')
       if (!response.ok) throw new Error('Chatterbox non disponibile o quota esaurita. Riprova più tardi o scegli Isabella.')
       return response
     }
@@ -41,15 +70,20 @@ export function personalRenderer(signal: AbortSignal) {
       uploaded = paths[0]
       if (!uploaded) throw new Error('Chatterbox non ha ricevuto il memo.')
     }
-    const endpoint = api + '/call/generate_tts_audio'
-    const job = await (await request(endpoint, {
+    if (functionIndex === undefined) {
+      const config = await (await request(origin + '/config')).json()
+      functionIndex = config.dependencies.find((d: { api_name: string }) => d.api_name === 'generate_tts_audio')?.id
+      if (typeof functionIndex !== 'number') throw new Error('Funzione di lettura Chatterbox non disponibile.')
+    }
+    const session = crypto.randomUUID()
+    const job = await (await request(api + '/queue/join', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: [text, 'it', { path: uploaded, meta: { _type: 'gradio.FileData' } }, 0.5, 0.8, 0, 0.5] }),
+      body: JSON.stringify({ fn_index: functionIndex, session_hash: session,
+        data: [text, 'it', { path: uploaded, meta: { _type: 'gradio.FileData' } }, 0.5, 0.8, 0, 0.5] }),
     })).json()
-    const events = await (await request(endpoint + '/' + encodeURIComponent(job.event_id))).text()
-    const complete = events.match(/event: complete\r?\ndata: ([^\r\n]+)/)
-    if (!complete) throw new Error('La demo Chatterbox non ha generato la frase. Riprova più tardi o scegli Isabella.')
-    const result = JSON.parse(complete[1])[0]
+    if (!job.event_id) throw new Error('Chatterbox non ha accettato la richiesta.')
+    const events = await (await request(api + '/queue/data?session_hash=' + session)).text()
+    const result = generationResult(events, job.event_id)
     const url = new URL(result.url || api + '/file=' + result.path, origin)
     if (url.origin !== origin) throw new Error('Indirizzo audio inatteso.')
     return (await request(url.href)).blob()
