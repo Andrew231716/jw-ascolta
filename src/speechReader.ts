@@ -387,7 +387,7 @@ export async function speakSentences(
         currentSentence = queue[i].sentenceAtWord[0] ?? currentSentence
         emitProgress()
 
-        onStatus?.('loading', 'Preparazione lettura ' + (i + 1) + ' di ' + queue.length)
+        if (!pausedGate) onStatus?.('loading', 'Preparazione lettura ' + (i + 1) + ' di ' + queue.length)
         const blob = await (blobs[i] ?? render(queue[i].text))
         blobs[i] = null
         if (aborted) return

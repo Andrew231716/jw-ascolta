@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { timedPlaylist, titleThemes } from '../src/listeningThemes.ts'
 import { cachedGeneration } from '../src/generatedAudio.ts'
 import { localResponse, listeningProgress, recordProgress, restoreBackup } from '../src/offlineLibrary.ts'
+import downloadHandler from '../api/download.ts'
 import { articleDocid, sameArticleTitle } from '../api/lib/article-metadata.ts'
 import { generationResult } from '../src/personalVoice.ts'
 
@@ -59,3 +60,12 @@ assert.equal(articleDocid('<a data-page-id="mid999999999"></a><article class="do
 assert.equal(articleDocid('<a data-page-id="mid999999999"></a>'), null)
 assert.equal(sameArticleTitle('Chi è Geova?', 'Cybercrime: qual è la soluzione?'), false)
 assert.equal(sameArticleTitle('Cybercrime: qual è la soluzione?', 'CYBERCRIME — QUAL È LA SOLUZIONE?'), true)
+
+assert.equal((await downloadHandler(new Request('https://app.test/api/download?url=https://evil.test/a.mp3'))).status, 400)
+globalThis.fetch = async () => new Response(null, { status: 302, headers: { Location: 'https://evil.test/a.mp3' } })
+assert.equal((await downloadHandler(new Request('https://app.test/api/download?url=https://cfp2.jw-cdn.org/a.mp3'))).status, 400)
+globalThis.fetch = async () => new Response('MP3data', { headers: { 'Content-Type': 'audio/mpeg' } })
+const download = await downloadHandler(new Request('https://app.test/api/download?url=https://cfp2.jw-cdn.org/a.mp3'))
+assert.equal(download.status, 200)
+assert.equal(await download.text(), 'MP3data')
+console.log('ok · media download and article identity')

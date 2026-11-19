@@ -179,6 +179,7 @@ export default function App() {
   )
   const [collectionName, setCollectionName] = useState('')
   const [unifiedMusicHits, setUnifiedMusicHits] = useState<Track[] | null>(null)
+  const [readingOpen, setReadingOpen] = useState(false)
   const [libraryFilter, setLibraryFilter] = useState('all')
   const [, setProgressVersion] = useState(0)
   const [online, setOnline] = useState(navigator.onLine)
@@ -683,7 +684,7 @@ export default function App() {
         </header>
       )}
 
-      <section className="now" ref={nowRef} hidden={!player.current && !status && !(siriFocus && saved?.tracks[saved.index])}>
+      <section className="now" ref={nowRef} hidden={readingOpen || (!player.current && !status && !(siriFocus && saved?.tracks[saved.index]))}>
         {player.current ? (
           <>
             <div className="now-art-wrap">
@@ -829,6 +830,7 @@ export default function App() {
       {!siriFocus && <div hidden={!libraryOpen}>
         <ListeningLibrary
           active={libraryOpen}
+          onReadingChange={setReadingOpen}
           initialReader={resumeReader}
           initialKind={listeningKind}
           initialSearch={listeningSearch}
@@ -1175,7 +1177,7 @@ export default function App() {
         </section>
       )}
 
-      {showMini && player.current && (
+      {showMini && player.current && !readingOpen && (
         <aside className="mini-player" aria-label="Lettore compatto">
           <button className="queue-item" onClick={() => nowRef.current?.scrollIntoView({ block: 'center' })}>
             {player.current.title}

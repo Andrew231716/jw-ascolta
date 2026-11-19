@@ -392,7 +392,7 @@ export function ArticleNarration({
         persistFromProgress(speechRef.current?.getProgress() ?? null)
       }
       if (next === 'completed') {
-        recordProgress(articleId, sentences.length, true)
+        recordProgress(articleId, sentences.length, to === null || (to >= sentences.length - 1 && (toWord === null || toWord >= (sentences.at(-1)?.words.length || 1) - 1)))
         clearBookmark(articleId)
         setBookmark(null)
         setProgress(null)

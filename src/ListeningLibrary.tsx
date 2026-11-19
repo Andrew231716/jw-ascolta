@@ -94,6 +94,7 @@ export function ListeningLibrary({
   onSave,
   initialReader = null,
   onReaderClose,
+  onReadingChange,
   playbackTime = 0,
   playingTrackId = null,
   initialKind = 'articles',
@@ -108,6 +109,7 @@ export function ListeningLibrary({
   onSave: (id: string, track: Track) => void
   initialReader?: ReaderTarget | null
   onReaderClose?: () => void
+  onReadingChange?: (open: boolean) => void
   playbackTime?: number
   playingTrackId?: string | null
   initialKind?: Kind
@@ -141,9 +143,14 @@ export function ListeningLibrary({
   const [official, setOfficial] = useState('')
   const [reader, setReader] = useState<ReaderTarget | null>(initialReader)
   const [videoReader, setVideoReader] = useState<VideoReaderTarget | null>(null)
+  useEffect(() => {
+    onReadingChange?.(Boolean(reader))
+    return () => onReadingChange?.(false)
+  }, [reader, onReadingChange])
   const [bookmarks, setBookmarks] = useState<NarrationBookmark[]>(() => listBookmarks())
   const [bookmarkTick, setBookmarkTick] = useState(0)
 
+  const listController = useRef<AbortController | null>(null)
   const linkController = useRef<AbortController | null>(null)
   useEffect(() => () => linkController.current?.abort(), [])
   useEffect(() => {
@@ -247,6 +254,7 @@ export function ListeningLibrary({
   useEffect(() => {
     if (!active || (!topic && !submitted && !latest)) return
     const controller = new AbortController()
+    listController.current = controller
     api<Page>(kind, controller.signal, {
       topic: topic || undefined,
       latest,
@@ -401,6 +409,7 @@ export function ListeningLibrary({
       <section className="chooser listening-library">
         <VideoClipReader
           track={videoReader}
+          onNarrationChange={onReadingChange}
           query={submitted}
           currentTime={playbackTime}
           playingTrackId={playingTrackId}
@@ -598,6 +607,11 @@ export function ListeningLibrary({
         </p>
       )}
 
+      {loading && <button type="button" className="btn ghost small" onClick={() => {
+        listController.current?.abort()
+        setLoading(false)
+        setError('Ricerca interrotta. Puoi riprovare o continuare dai risultati disponibili.')
+      }}>Annulla ricerca</button>}
       {error && (
         <p role="alert">
           {error}{' '}
@@ -861,9 +875,10 @@ export function ListeningLibrary({
           {next !== null && (
             <button
               className="btn ghost"
-              disabled={loading || Boolean(error)}
+              disabled={loading}
               onClick={() => {
                 setLoading(true)
+                setError('')
                 setOffset(next)
               }}
             >

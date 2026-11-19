@@ -9,13 +9,26 @@ export function DownloadButton({ track }: { track: Track }) {
   const controller = useRef<AbortController | null>(null)
   useEffect(() => {
     let alive = true
-    const refresh = () => { void listDownloads().then(items => { if (alive) setSaved(items.some(item => item.id === track.id)) }).catch(() => {}) }
+    const refresh = () => {
+      void listDownloads()
+        .then((items) => {
+          if (alive) setSaved(items.some((item) => item.id === track.id))
+        })
+        .catch(() => {})
+    }
     refresh()
     window.addEventListener(LIBRARY_CHANGED, refresh)
-    return () => { alive = false; controller.current?.abort(); window.removeEventListener(LIBRARY_CHANGED, refresh) }
+    return () => {
+      alive = false
+      controller.current?.abort()
+      window.removeEventListener(LIBRARY_CHANGED, refresh)
+    }
   }, [track.id])
   async function download() {
-    if (busy) { controller.current?.abort(); return }
+    if (busy) {
+      controller.current?.abort()
+      return
+    }
     controller.current = new AbortController()
     setBusy(true)
     setMessage('')
@@ -24,13 +37,28 @@ export function DownloadButton({ track }: { track: Track }) {
       setSaved(true)
       setMessage('Disponibile offline')
     } catch (error) {
-      setMessage(controller.current.signal.aborted ? 'Download annullato' : error instanceof Error ? error.message : 'Download non riuscito')
-    } finally { setBusy(false) }
+      setMessage(
+        controller.current.signal.aborted
+          ? 'Download annullato'
+          : error instanceof Error
+            ? error.message
+            : 'Download non riuscito',
+      )
+    } finally {
+      setBusy(false)
+    }
   }
-  return <span className="download-control">
-    <button type="button" className="btn ghost small" disabled={saved} onClick={() => void download()}>
-      {saved ? '✓ Offline' : busy ? 'Annulla download' : '↓ Salva offline'}
-    </button>
-    {message && <span role="status">{message}</span>}
-  </span>
+  return (
+    <span className="download-control">
+      <button
+        type="button"
+        className="btn ghost small"
+        disabled={saved}
+        onClick={() => void download()}
+      >
+        {saved ? '✓ Offline' : busy ? 'Annulla download' : '↓ Salva offline'}
+      </button>
+      {message && <span role="status">{message}</span>}
+    </span>
+  )
 }
