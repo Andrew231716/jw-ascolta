@@ -1,3 +1,4 @@
+import { localResponse } from './offlineLibrary.ts'
 export type SubtitleCue = {
   index: number
   start: number
@@ -170,7 +171,7 @@ export function formatCueTime(seconds: number) {
 }
 
 export async function fetchSubtitles(url: string, signal?: AbortSignal) {
-  const response = await fetch(url, { signal })
+  const response = await localResponse(url, signal)
   if (!response.ok) throw new Error('Sottotitoli non disponibili')
   return parseVtt(await response.text())
 }

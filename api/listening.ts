@@ -1,3 +1,5 @@
+import { articleDocid, sameArticleTitle } from './lib/article-metadata.js'
+
 export const config = { runtime: 'edge', maxDuration: 60 }
 
 const site = 'https://www.jw.org'
@@ -595,7 +597,8 @@ async function fetchArticleAudio(docid: string) {
 }
 
 async function articleTracks(path: string, offset: number, query = '', name = '') {
-  const html = await (await read(site + path)).text()
+  const pageHtml = await (await read(site + path)).text()
+  const html = pageHtml.match(/<main\b[\s\S]*?<\/main>/i)?.[0] || pageHtml
   const documentIds = new Map<
     string,
     { path: string; title: string; matchIn?: string }
@@ -607,7 +610,7 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
   for (const match of html.matchAll(
     /<a\b[^>]*href="(\/it\/[^"#?]+\/)"[^>]*data-page-id="mid(\d+)"[^>]*>/g,
   )) {
-    if (match[1] === path) continue
+    if (match[1] === path || !/^\/it\/(?:biblioteca-digitale\/(?:articoli|riviste|libri)\/|cosa-dice-la-Bibbia\/)[^/]+\/[^/]+\//.test(match[1])) continue
     if (!documentIds.has(match[2])) {
       documentIds.set(match[2], {
         path: match[1],
@@ -650,7 +653,18 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
   const batch = candidates.slice(offset, offset + 12)
   const results = await Promise.allSettled(
     batch.map(async ([id, meta]) => {
-      const file = await fetchArticleAudio(id)
+      let docid = id
+      let file = await fetchArticleAudio(docid)
+      if (!file || (meta.title && !sameArticleTitle(file.title, meta.title))) {
+        const page = await (await read(site + meta.path)).text()
+        const canonicalId = articleDocid(page)
+        if (canonicalId && canonicalId !== docid) {
+          docid = canonicalId
+          file = await fetchArticleAudio(docid)
+        }
+        const pageTitle = page.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1]
+        if (file && pageTitle && !sameArticleTitle(file.title, label(pageTitle))) file = null
+      }
       if (!file) {
         return {
           pending: {
@@ -666,14 +680,14 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
       return {
         pending: null as PendingItem | null,
         track: {
-          id: 'article-' + id,
+          id: 'article-' + docid,
           title: file.title || meta.title || `Articolo ${id}`,
           url: file.url,
           duration: file.duration,
           source: site + meta.path,
           topics: name ? [name] : [],
           matchIn: meta.matchIn,
-          docid: id,
+          docid,
           canRead: true,
           markers: file.markers,
         } satisfies LibraryTrack,
@@ -974,6 +988,22 @@ export default async function handler(request: Request) {
     'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=86400',
   }
   try {
+    const link = searchParams.get('link')
+    if (link) {
+      const parsed = new URL(link)
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || !['www.jw.org', 'jw.org'].includes(parsed.hostname)) return Response.json({ error: 'Usa un collegamento HTTPS di JW.org.' }, { status: 400 })
+      const naturalKey = parsed.searchParams.get('lank') || (parsed.hash.includes('/mediaitems/') ? parsed.hash.split('/').filter(Boolean).pop() : '') || ''
+      if (naturalKey && /^[\w-]+$/.test(naturalKey)) {
+        const tracks = await allVideoTracks()
+        const track = tracks.find(item => new URL(item.source).searchParams.get('lank') === naturalKey)
+        if (track) return Response.json({ track }, { headers })
+      }
+      return Response.json({ article: parsed.href }, { headers })
+    }
+    if (searchParams.get('latest') === '1') {
+      const result = await articleTracks('/it/cosa-nuovo/', offset, '', 'Novità JW.org')
+      return Response.json(result, result.failed ? {} : { headers })
+    }
     if (browse && (kind === 'articles' || kind === 'videos') && !topic && !query) {
       return Response.json(await browseSections(kind), { headers })
     }

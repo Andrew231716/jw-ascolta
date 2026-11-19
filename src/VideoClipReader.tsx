@@ -41,17 +41,23 @@ export function VideoClipReader({
   query = '',
   onClose,
   onPlayClip,
+  onNarrationChange,
   currentTime = 0,
   playingTrackId = null,
 }: {
   track: Track & { subtitleUrl: string; source?: string }
   query?: string
   onClose: () => void
+  onNarrationChange?: (open: boolean) => void
   onPlayClip: (clip: Track, startSeconds: number) => void
   currentTime?: number
   playingTrackId?: string | null
 }) {
   const [readerOpen, setReaderOpen] = useState(false)
+  useEffect(() => {
+    onNarrationChange?.(readerOpen)
+    return () => onNarrationChange?.(false)
+  }, [readerOpen, onNarrationChange])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [cues, setCues] = useState<SubtitleCue[]>([])

@@ -1,3 +1,4 @@
+import { audioKey, cachedGeneration } from './generatedAudio.ts'
 // The sample stays on this device until the user starts personal narration.
 const key = 'jw-ascolta.personal-voice.v1'
 const origin = 'https://resembleai-chatterbox-multilingual-tts.hf.space'
@@ -33,6 +34,7 @@ export function hasVoiceSample() {
 
 export function forgetVoiceSample() {
   localStorage.removeItem(key)
+  void caches.open('jw-ascolta-voice-v1').then(cache => cache.delete('/__voice/sample')).catch(() => {})
 }
 
 export async function saveVoiceSample(file: File) {
@@ -43,14 +45,33 @@ export async function saveVoiceSample(file: File) {
     reader.onerror = () => reject(new Error('Impossibile leggere il memo.'))
     reader.readAsDataURL(file)
   })
-  localStorage.setItem(key, JSON.stringify({ data, name: file.name }))
+  if (!/^(audio|video)\//.test(file.type) && !/\.(wav|mp3|m4a|ogg|webm|aac)$/i.test(file.name)) throw new Error('Scegli un file audio.')
+  const cache = await caches.open('jw-ascolta-voice-v1')
+  await cache.put('/__voice/sample', new Response(JSON.stringify({ data, name: file.name })))
+  localStorage.setItem(key, JSON.stringify({ name: file.name, cached: true }))
+  void navigator.storage?.persist?.().catch(() => {})
 }
 
 export function personalRenderer(signal: AbortSignal) {
   const token = sessionToken
   let functionIndex: number | undefined
   let uploaded: string | undefined
+  let sampleHash: Promise<string> | undefined
+  let sample: Promise<{ data: string; name: string }> | undefined
+  const readSample = () => sample ||= (async () => {
+    const stored = localStorage.getItem(key)
+    if (!stored) throw new Error('Seleziona prima il tuo memo vocale.')
+    const metadata = JSON.parse(stored)
+    if (metadata.data) return metadata
+    const saved = await (await caches.open('jw-ascolta-voice-v1')).match('/__voice/sample')
+    if (!saved) throw new Error('Il memo non è più sul dispositivo. Selezionalo di nuovo.')
+    return saved.json()
+  })()
   return async (text: string) => {
+    const { data, name } = await readSample()
+    sampleHash ||= audioKey([data])
+    const cacheKey = await audioKey(['personal', await sampleHash, text])
+    return cachedGeneration(cacheKey, async () => {
     const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(180000)])
     const request = async (url: string, options?: RequestInit) => {
       const headers = new Headers(options?.headers)
@@ -61,9 +82,6 @@ export function personalRenderer(signal: AbortSignal) {
       return response
     }
     if (!uploaded) {
-      const stored = localStorage.getItem(key)
-      if (!stored) throw new Error('Seleziona prima il tuo memo vocale.')
-      const { data, name } = JSON.parse(stored)
       const form = new FormData()
       form.append('files', await (await fetch(data)).blob(), name)
       const paths = await (await request(api + '/upload', { method: 'POST', body: form })).json()
@@ -82,10 +100,32 @@ export function personalRenderer(signal: AbortSignal) {
         data: [text, 'it', { path: uploaded, meta: { _type: 'gradio.FileData' } }, 0.5, 0.8, 0, 0.5] }),
     })).json()
     if (!job.event_id) throw new Error('Chatterbox non ha accettato la richiesta.')
-    const events = await (await request(api + '/queue/data?session_hash=' + session)).text()
-    const result = generationResult(events, job.event_id)
+    const eventResponse = await request(api + '/queue/data?session_hash=' + session)
+    const reader = eventResponse.body?.getReader()
+    if (!reader) throw new Error('Collegamento Chatterbox non disponibile.')
+    const decoder = new TextDecoder()
+    let pending = ''
+    let result
+    try {
+      while (!result) {
+        const chunk = await reader.read()
+        if (chunk.done) throw new Error('Chatterbox ha chiuso il collegamento. Riprova dalla posizione salvata.')
+        pending += decoder.decode(chunk.value, { stream: true })
+        const lines = pending.split(/\r?\n/)
+        pending = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.startsWith('data:')) continue
+          const event = JSON.parse(line.slice(5))
+          if (event.event_id === job.event_id && event.msg === 'process_completed') {
+            result = generationResult(line, job.event_id)
+            break
+          }
+        }
+      }
+    } finally { await reader.cancel().catch(() => {}) }
     const url = new URL(result.url || api + '/file=' + result.path, origin)
     if (url.origin !== origin) throw new Error('Indirizzo audio inatteso.')
     return (await request(url.href)).blob()
+    })
   }
 }

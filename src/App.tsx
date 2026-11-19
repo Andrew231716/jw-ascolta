@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   SECTIONS,
@@ -25,6 +26,10 @@ import {
   type VideoClipBookmark,
 } from './recentStore'
 import './App.css'
+import { DownloadButton } from './DownloadButton'
+import { LibraryTools } from './LibraryTools'
+import { requestPauseNarration } from './audioBus'
+import { listeningProgress, PROGRESS_CHANGED } from './offlineLibrary.ts'
 
 type View = 'home' | 'siri'
 type HomeTab = 'music' | 'listening' | 'library'
@@ -175,12 +180,17 @@ export default function App() {
   )
   const [collectionName, setCollectionName] = useState('')
   const [unifiedMusicHits, setUnifiedMusicHits] = useState<Track[] | null>(null)
+  const [readingOpen, setReadingOpen] = useState(false)
+  const [libraryFilter, setLibraryFilter] = useState('all')
+  const [, setProgressVersion] = useState(0)
+  const [online, setOnline] = useState(navigator.onLine)
   const [timer, setTimer] = useState<number | null>(null)
   const [minutes, setMinutes] = useState('30')
   const [timerFade, setTimerFade] = useState(true)
   const nowRef = useRef<HTMLElement>(null)
   const [showMini, setShowMini] = useState(false)
   const lastSession = useRef<Session | null>(null)
+  const lastRecentId = useRef('')
   const [articleBookmarks, setArticleBookmarks] = useState(() => listBookmarks())
   const [videoBookmarks, setVideoBookmarks] = useState(() => listVideoBookmarks())
   const [recent, setRecent] = useState(() => listRecent())
@@ -189,10 +199,27 @@ export default function App() {
   )
   const staticMirror = useMemo(() => isStaticMirrorHost(), [])
   const { playlist, index, currentTime, pause } = player
-
   useEffect(() => {
-    player.setRepeat(!stopAtEnd)
-  }, [stopAtEnd])
+    const refresh = () => setProgressVersion(value => value + 1)
+    const network = () => setOnline(navigator.onLine)
+    window.addEventListener(PROGRESS_CHANGED, refresh)
+    window.addEventListener('online', network)
+    window.addEventListener('offline', network)
+    return () => {
+      window.removeEventListener(PROGRESS_CHANGED, refresh)
+      window.removeEventListener('online', network)
+      window.removeEventListener('offline', network)
+    }
+  }, [])
+  const progressRecords = listeningProgress()
+  const visibleRecent = recent.filter(item => libraryFilter === 'all' ||
+    (progressRecords[item.track?.id || item.id.replace(/^(article|video|music):/, '')]?.state || 'new') === libraryFilter)
+
+
+  const setRepeat = player.setRepeat
+  useEffect(() => {
+    setRepeat(!stopAtEnd)
+  }, [stopAtEnd, setRepeat])
 
   useEffect(() => {
     setArticleBookmarks(listBookmarks())
@@ -212,8 +239,9 @@ export default function App() {
 
   useEffect(() => {
     const track = playlist[index]
-    if (!track || currentTime < 1.5) return
-    const kind = track.id.startsWith('video-') || track.clipStart != null ? 'video' : 'music'
+    if (!track || currentTime < 1.5 || lastRecentId.current === track.id) return
+    lastRecentId.current = track.id
+    const kind = track.contentKind || (track.id.startsWith('video-') || track.clipStart != null ? 'video' : track.source ? 'article' : 'music')
     pushRecent({
       id: `${kind}:${track.id}`,
       title: track.title,
@@ -222,7 +250,7 @@ export default function App() {
       clipStart: track.clipStart,
       clipEnd: track.clipEnd,
     })
-  }, [playlist, index])
+  }, [playlist, index, currentTime])
 
   useEffect(() => {
     const persist = () => {
@@ -251,9 +279,12 @@ export default function App() {
   const fadeOutAndPause = player.fadeOutAndPause
   useEffect(() => {
     if (timer === null) return
+    let stopping = false
     const stop = () => {
-      if (Date.now() < timer) return
+      if (Date.now() < timer || stopping) return
+      stopping = true
       void (async () => {
+        requestPauseNarration()
         if (timerFade) await fadeOutAndPause(4500)
         else pause()
         setTimer(null)
@@ -272,7 +303,7 @@ export default function App() {
     const observer = new IntersectionObserver(([entry]) => setShowMini(!entry.isIntersecting))
     observer.observe(nowRef.current)
     return () => observer.disconnect()
-  }, [view])
+  }, [view, player.current?.id])
 
   function toggleFavorite(track: Track) {
     setFavorites((previous) =>
@@ -286,7 +317,7 @@ export default function App() {
     setStatus(null)
     const track = tracks[start]
     if (track) {
-      const kind = track.id.startsWith('video-') || track.clipStart != null ? 'video' : 'music'
+      const kind = track.contentKind || (track.id.startsWith('video-') || track.clipStart != null ? 'video' : track.source ? 'article' : 'music')
       pushRecent({
         id: `${kind}:${track.id}`,
         title: track.title,
@@ -307,7 +338,7 @@ export default function App() {
       return
     }
     if (item.track) {
-      playTracks([item.track], 0, item.clipStart || item.track.clipStart || 0)
+      playTracks([item.track], 0, progressRecords[item.track.id]?.state === 'started' ? progressRecords[item.track.id].position : item.clipStart || item.track.clipStart || 0)
     }
   }
 
@@ -541,6 +572,7 @@ export default function App() {
         </button>
       )}
 
+      {!online && <p className="offline-banner" role="status">Modalità offline · apri Libreria per i contenuti salvati.</p>}
       {!siriFocus && (
         <header className="hero">
           <div className="brand-lockup">
@@ -612,7 +644,7 @@ export default function App() {
               <a href="https://jw-ascolta.vercel.app">jw-ascolta.vercel.app</a>.
             </p>
           )}
-          <nav className="top-nav" aria-label="Sezioni principali">
+          {createPortal(<nav className="top-nav" aria-label="Sezioni principali">
             <button type="button" className="nav-link" aria-pressed={homeTab === 'music'}
               onClick={() => {
                 setHomeTab('music')
@@ -630,7 +662,7 @@ export default function App() {
                 setVideoBookmarks(listVideoBookmarks())
                 setHomeTab('library')
               }}>Libreria</button>
-          </nav>
+          </nav>, document.body)}
           {homeTab === 'music' && <div className="cta-row">
             <button className="btn primary" disabled={catalogLoading}
               onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
@@ -653,7 +685,7 @@ export default function App() {
         </header>
       )}
 
-      <section className="now" ref={nowRef} hidden={!player.current && !status && !(siriFocus && saved?.tracks[saved.index])}>
+      <section className="now" ref={nowRef} hidden={readingOpen || (!player.current && !status && !(siriFocus && saved?.tracks[saved.index]))}>
         {player.current ? (
           <>
             <div className="now-art-wrap">
@@ -720,7 +752,8 @@ export default function App() {
                   {favorites.some((track) => track.id === player.current?.id) ? '★ Nei preferiti' : '☆ Aggiungi ai preferiti'}
                 </button>
               </div>
-              {player.error && <p className="error" role="alert">{player.error}</p>}
+              <DownloadButton track={player.current} />
+              {player.error && <p className="error" role="alert">{player.error} <button className="btn ghost small" onClick={player.retry}>Riprova</button></p>}
               {player.needsGesture && (
                 <p className="gesture-inline">
                   Tocca ▶ qui sopra oppure il pulsante grande per avviare.
@@ -741,10 +774,11 @@ export default function App() {
         )}
       </section>
 
-      {player.current && (
+      {(player.current || libraryOpen) && (
         <details className="chooser listening-tools">
           <summary>Opzioni riproduzione · timer e velocità</summary>
           <div className="listening-tools-body" aria-label="Timer di spegnimento">
+            <div className="music-only-tools" hidden={!player.current}>
             <button className="btn ghost small" onClick={() => player.skip(-15)}>−15 s</button>
             <button className="btn ghost small" onClick={() => player.skip(15)}>+15 s</button>
             <label>Velocità <select value={speed} onChange={(event) => {
@@ -768,13 +802,14 @@ export default function App() {
               />{' '}
               Ferma dopo questo brano
             </label>
+            </div>
             <label>
               <input
                 type="checkbox"
                 checked={timerFade}
                 onChange={(event) => setTimerFade(event.target.checked)}
               />{' '}
-              Fade-out del timer
+              Dissolvenza della musica al termine
             </label>
             <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
               {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}
@@ -796,6 +831,7 @@ export default function App() {
       {!siriFocus && <div hidden={!libraryOpen}>
         <ListeningLibrary
           active={libraryOpen}
+          onReadingChange={setReadingOpen}
           initialReader={resumeReader}
           initialKind={listeningKind}
           initialSearch={listeningSearch}
@@ -1009,6 +1045,13 @@ export default function App() {
       {!siriFocus && myLibraryOpen && (
         <section className="chooser" id="libreria" aria-label="Libreria personale">
           <h2>La tua libreria</h2>
+          <LibraryTools onPlay={playTracks} onOpenArticle={item => { setResumeReader(item); setHomeTab('listening') }} />
+          <label>Filtra gli ascolti recenti
+            <select value={libraryFilter} onChange={event => setLibraryFilter(event.target.value)}>
+              <option value="all">Tutti</option><option value="new">Da iniziare</option>
+              <option value="started">In corso</option><option value="completed">Completati</option>
+            </select>
+          </label>
           {!recent.length && !videoBookmarks.length && !later.length && !favorites.length && !collections.length && (
             <p className="section-lede library-empty">
               Qui trovi recenti, preferiti e liste salvate. Inizia da Musica o Ascolta.
@@ -1018,7 +1061,7 @@ export default function App() {
           <h3 className="library-subhead">Recenti</h3>
           {recent.length ? (
             <ul className="library-list">
-              {recent.slice(0, 12).map((item) => (
+              {visibleRecent.slice(0, 12).map((item) => (
                 <li key={item.id + item.updatedAt}>
                   <button className="queue-item" onClick={() => playRecentItem(item)}>
                     <span className="q-title">{item.title}</span>
@@ -1135,13 +1178,15 @@ export default function App() {
         </section>
       )}
 
-      {showMini && player.current && (
+      {showMini && player.current && !readingOpen && (
         <aside className="mini-player" aria-label="Lettore compatto">
           <button className="queue-item" onClick={() => nowRef.current?.scrollIntoView({ block: 'center' })}>
             {player.current.title}
           </button>
           <button className="icon-btn" aria-label={player.playing ? 'Pausa' : 'Riproduci'}
             onClick={() => void player.toggle()}>{player.playing ? '❚❚' : '▶'}</button>
+          <button className="icon-btn" aria-label="Indietro di 15 secondi" onClick={() => player.skip(-15)}>−15</button>
+          <button className="icon-btn" aria-label="Avanti di 15 secondi" onClick={() => player.skip(15)}>+15</button>
           <button className="icon-btn" aria-label="Successivo" onClick={player.playNext}>›</button>
           <button
             className="icon-btn"

@@ -6,7 +6,7 @@ import {
   resolveSectionSlugs,
   toHls,
   toM3u,
-} from './lib/tracks'
+} from './lib/tracks.js'
 
 /**
  * Playlist for Siri / CarPlay.

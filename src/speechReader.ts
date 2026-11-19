@@ -1,4 +1,5 @@
 import { personalRenderer } from './personalVoice'
+import { audioKey, cachedGeneration } from './generatedAudio.ts'
 import type { ArticleSentence } from './articleText'
 import { onPauseNarration, requestPauseMusic } from './audioBus'
 
@@ -94,6 +95,7 @@ export function primeNarrationAudio(): void {
 }
 
 let activeNarrationPause: (() => void) | null = null
+let narrationWindow: { start: number; end: number } | null = null
 
 /** Stop Isabella / neural TTS without destroying the shared element. */
 export function pauseNarrationAudio(): void {
@@ -122,7 +124,7 @@ async function fetchNeuralChunk(
   signal: AbortSignal,
 ): Promise<Blob> {
   const res = await fetch('/api/tts', {
-    method: 'POST', signal,
+    method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(65000)]),
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, voice, rate }),
   })
@@ -228,17 +230,17 @@ export async function speakSentences(
     onChunkReady,
   } = opts
 
+  narrationWindow = null
   const controller = new AbortController()
   const render =
     voice === 'personal'
       ? personalRenderer(controller.signal)
-      : (text: string) => fetchNeuralChunk(text, voice, rate, controller.signal)
+      : async (text: string) => cachedGeneration(await audioKey([voice, rate, text]), () => fetchNeuralChunk(text, voice, rate, controller.signal))
 
   // Match /api/tts MAX_CHARS so Isabella & co. get one continuous synthesis
   // whenever the selection fits; longer texts are stitched into a single MP3.
-  const maxLen = voice === 'personal' ? 300 : 2200
+  const maxLen = voice === 'personal' ? 300 : 1000
   const queue = buildContinuousQueue(texts, sentenceIndexes, firstWordOffset, maxLen)
-  const neural = voice !== 'personal'
 
   if (!queue.length) {
     onStatus?.('error', 'Testo vuoto.')
@@ -256,7 +258,7 @@ export async function speakSentences(
   let currentWord = firstWordOffset
   let currentSentence = queue[0]?.sentenceAtWord[0] ?? sentenceIndexes[0] ?? 0
   let finished = false
-  const queueLength = neural ? 1 : queue.length
+  const queueLength = queue.length
 
   const progressNow = (): SpeakProgress | null => {
     if (finished || !queue.length) return null
@@ -375,43 +377,10 @@ export async function speakSentences(
 
   const run = async () => {
     try {
-      if (neural) {
-        // Generate every clip, then stitch into ONE mp3 so Isabella/Elsa/…
-        // never pause between sentences (HTMLAudioElement clip handoff is gap-prone).
-        const parts = await Promise.all(queue.map((item) => render(item.text)))
-        if (aborted) return
-        parts.forEach((blob, i) => onChunkReady?.(blob, i))
-        const merged = new Blob(parts, { type: parts[0]?.type || 'audio/mpeg' })
-        const sentenceAtWord = queue.flatMap((item) => item.sentenceAtWord)
-        const item: QueueItem = {
-          text: queue.map((q) => q.text).join(' '),
-          wordBase: firstWordOffset,
-          wordsInClip: sentenceAtWord.length,
-          sentenceAtWord,
-        }
-        playIndex = 0
-        await waitIfPaused()
-        if (aborted) return
-        const result = await playBlob(merged, item)
-        if (aborted) return
-        if (result === 'error') {
-          controller.abort()
-          cleanup()
-          onStatus?.('error', 'Errore audio su questa frase. Riprova o salta avanti.')
-          return
-        }
-        if (!aborted) {
-          finished = true
-          cleanup()
-          onStatus?.('completed')
-        }
-        return
-      }
-
-      // Personal voice: still sequential clips, but keep the next one ready.
+      // Start the first clip as soon as it is ready and prepare one ahead.
       const blobs: Array<Promise<Blob> | null> = queue.map(() => null)
       blobs[0] = render(queue[0].text)
-      if (queue.length > 1) blobs[1] = render(queue[1].text)
+      void blobs[0]!.catch(() => {})
 
       for (let i = 0; i < queue.length; i += 1) {
         if (aborted) return
@@ -420,14 +389,15 @@ export async function speakSentences(
         currentSentence = queue[i].sentenceAtWord[0] ?? currentSentence
         emitProgress()
 
+        if (!pausedGate) onStatus?.('loading', 'Preparazione lettura ' + (i + 1) + ' di ' + queue.length)
         const blob = await (blobs[i] ?? render(queue[i].text))
         blobs[i] = null
         if (aborted) return
         onChunkReady?.(blob, i)
 
-        if (i + 2 < queue.length && !blobs[i + 2]) {
-          blobs[i + 2] = render(queue[i + 2].text)
-          void blobs[i + 2]!.catch(() => {})
+        if (i + 1 < queue.length && !blobs[i + 1]) {
+          blobs[i + 1] = render(queue[i + 1].text)
+          void blobs[i + 1]!.catch(() => {})
         }
 
         await waitIfPaused()
@@ -512,6 +482,7 @@ export async function speakOriginalAudio(opts: {
   onProgress?: (progress: SpeakProgress) => void
 }): Promise<SpeakHandle> {
   const { url, start, end, sentences, rate = '+0%', onStatus, onProgress } = opts
+  narrationWindow = { start, end }
   const audioEl = ensureAudioElement()
   const controller = new AbortController()
   let aborted = false
@@ -560,6 +531,9 @@ export async function speakOriginalAudio(opts: {
   }
 
   const cleanup = () => {
+    resumeGate?.()
+    resumeGate = null
+    pausedGate = null
     try {
       audioEl.ontimeupdate = null
       audioEl.onended = null
@@ -631,16 +605,17 @@ export async function speakOriginalAudio(opts: {
           resolve()
           return
         }
-        const ok = () => {
+        const clear = () => {
+          window.clearTimeout(timeout)
+          controller.signal.removeEventListener('abort', cancel)
           audioEl.removeEventListener('loadedmetadata', ok)
           audioEl.removeEventListener('error', fail)
-          resolve()
         }
-        const fail = () => {
-          audioEl.removeEventListener('loadedmetadata', ok)
-          audioEl.removeEventListener('error', fail)
-          reject(new Error('Audio JW.org non caricabile.'))
-        }
+        const ok = () => { clear(); resolve() }
+        const fail = () => { clear(); reject(new Error('Audio JW.org non caricabile. Riprova.')) }
+        const cancel = () => { clear(); reject(new DOMException('Annullato', 'AbortError')) }
+        const timeout = window.setTimeout(fail, 30000)
+        controller.signal.addEventListener('abort', cancel, { once: true })
         audioEl.addEventListener('loadedmetadata', ok, { once: true })
         audioEl.addEventListener('error', fail, { once: true })
       })
@@ -674,6 +649,8 @@ export async function speakOriginalAudio(opts: {
       }
 
       audioEl.currentTime = Math.max(0, start)
+      if (pausedGate) await pausedGate
+      if (aborted) return
       void audioEl.play().then(
         () => {
           if (aborted || pausedGate) return
@@ -716,4 +693,13 @@ export async function speakArticle(
     rate: opts.rate,
     onStatus: opts.onStatus,
   })
+}
+
+/** Seek the active narration, including its existing progress listeners. */
+export function skipNarrationAudio(seconds: number) {
+  const audio = primedAudio
+  if (!audio || !Number.isFinite(audio.duration)) return
+  const floor = narrationWindow?.start || 0
+  const ceiling = Math.min(audio.duration, narrationWindow?.end ?? audio.duration)
+  audio.currentTime = Math.max(floor, Math.min(ceiling, audio.currentTime + seconds))
 }
