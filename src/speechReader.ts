@@ -234,8 +234,11 @@ export async function speakSentences(
       ? personalRenderer(controller.signal)
       : (text: string) => fetchNeuralChunk(text, voice, rate, controller.signal)
 
-  const maxLen = voice === 'personal' ? 300 : 1800
+  // Match /api/tts MAX_CHARS so Isabella & co. get one continuous synthesis
+  // whenever the selection fits; longer texts are stitched into a single MP3.
+  const maxLen = voice === 'personal' ? 300 : 2200
   const queue = buildContinuousQueue(texts, sentenceIndexes, firstWordOffset, maxLen)
+  const neural = voice !== 'personal'
 
   if (!queue.length) {
     onStatus?.('error', 'Testo vuoto.')
@@ -253,14 +256,15 @@ export async function speakSentences(
   let currentWord = firstWordOffset
   let currentSentence = queue[0]?.sentenceAtWord[0] ?? sentenceIndexes[0] ?? 0
   let finished = false
+  const queueLength = neural ? 1 : queue.length
 
   const progressNow = (): SpeakProgress | null => {
-    if (finished || !queue.length || playIndex >= queue.length) return null
+    if (finished || !queue.length) return null
     return {
       sentenceIndex: currentSentence,
       wordIndex: currentWord,
       queueIndex: playIndex,
-      queueLength: queue.length,
+      queueLength,
     }
   }
 
@@ -371,7 +375,40 @@ export async function speakSentences(
 
   const run = async () => {
     try {
-      // Prefetch first two clips so the second starts with no wait.
+      if (neural) {
+        // Generate every clip, then stitch into ONE mp3 so Isabella/Elsa/…
+        // never pause between sentences (HTMLAudioElement clip handoff is gap-prone).
+        const parts = await Promise.all(queue.map((item) => render(item.text)))
+        if (aborted) return
+        parts.forEach((blob, i) => onChunkReady?.(blob, i))
+        const merged = new Blob(parts, { type: parts[0]?.type || 'audio/mpeg' })
+        const sentenceAtWord = queue.flatMap((item) => item.sentenceAtWord)
+        const item: QueueItem = {
+          text: queue.map((q) => q.text).join(' '),
+          wordBase: firstWordOffset,
+          wordsInClip: sentenceAtWord.length,
+          sentenceAtWord,
+        }
+        playIndex = 0
+        await waitIfPaused()
+        if (aborted) return
+        const result = await playBlob(merged, item)
+        if (aborted) return
+        if (result === 'error') {
+          controller.abort()
+          cleanup()
+          onStatus?.('error', 'Errore audio su questa frase. Riprova o salta avanti.')
+          return
+        }
+        if (!aborted) {
+          finished = true
+          cleanup()
+          onStatus?.('completed')
+        }
+        return
+      }
+
+      // Personal voice: still sequential clips, but keep the next one ready.
       const blobs: Array<Promise<Blob> | null> = queue.map(() => null)
       blobs[0] = render(queue[0].text)
       if (queue.length > 1) blobs[1] = render(queue[1].text)
