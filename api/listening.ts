@@ -977,8 +977,8 @@ export default async function handler(request: Request) {
     const link = searchParams.get('link')
     if (link) {
       const parsed = new URL(link)
-      if (parsed.protocol !== 'https:' || !['www.jw.org', 'jw.org'].includes(parsed.hostname)) return Response.json({ error: 'Usa un collegamento HTTPS di JW.org.' }, { status: 400 })
-      const naturalKey = parsed.searchParams.get('lank') || parsed.hash.split('/').filter(Boolean).at(-1) || ''
+      if (parsed.protocol !== 'https:' || parsed.username || parsed.password || !['www.jw.org', 'jw.org'].includes(parsed.hostname)) return Response.json({ error: 'Usa un collegamento HTTPS di JW.org.' }, { status: 400 })
+      const naturalKey = parsed.searchParams.get('lank') || (parsed.hash.includes('/mediaitems/') ? parsed.hash.split('/').filter(Boolean).at(-1) : '') || ''
       if (naturalKey && /^[\w-]+$/.test(naturalKey)) {
         const tracks = await allVideoTracks()
         const track = tracks.find(item => new URL(item.source).searchParams.get('lank') === naturalKey)

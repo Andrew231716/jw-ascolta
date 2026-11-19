@@ -158,7 +158,7 @@ export function ListeningLibrary({
     linkController.current = controller
     try {
       const url = new URL(link.trim())
-      if (url.protocol !== 'https:' || !['www.jw.org', 'jw.org'].includes(url.hostname)) throw new Error('Incolla un collegamento HTTPS di JW.org.')
+      if (url.protocol !== 'https:' || url.username || url.password || !['www.jw.org', 'jw.org'].includes(url.hostname)) throw new Error('Incolla un collegamento HTTPS di JW.org.')
       setLinkBusy(true)
       setError('')
       const data = await (await localResponse('/api/listening?' + new URLSearchParams({ link: url.href }), controller.signal)).json()
@@ -428,7 +428,7 @@ export function ListeningLibrary({
         </form>
       </details>
       <div className="discovery-actions">
-        <button type="button" className="btn ghost small" onClick={() => { resetList(); setTopic(''); setTopicName('Novità JW.org'); setSubmitted(''); setLatest(true); setLoading(true); setRetry(value => value + 1) }}>Novità JW.org</button>
+        <button type="button" className="btn ghost small" onClick={() => { resetList(); setKind('articles'); setSectionId(''); setTopic(''); setTopicName('Novità articoli JW.org'); setSubmitted(''); setLatest(true); setLoading(true); setRetry(value => value + 1) }}>Novità articoli JW.org</button>
         <button type="button" className="btn ghost small" onClick={() => { setError(''); setLoadingBrowse(true); setCatalogVersion(String(Date.now())); setRetry(value => value + 1); resetList() }}>Aggiorna catalogo</button>
       </div>
       {atHome && <details><summary>Percorsi di ascolto per argomento</summary>

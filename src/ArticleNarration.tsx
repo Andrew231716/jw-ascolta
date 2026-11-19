@@ -82,6 +82,7 @@ export function ArticleNarration({
   const hasOriginal = Boolean(audioUrl)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [advanced, setAdvanced] = useState(false)
+  const [followReading, setFollowReading] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [article, setArticle] = useState<ArticlePayload | null>(null)
@@ -520,6 +521,10 @@ export function ArticleNarration({
   const pausedHere = status === 'paused' && progress
   const currentSentence = progress?.sentenceIndex
   const currentWord = progress?.wordIndex
+  useEffect(() => {
+    if (!followReading || currentSentence === undefined) return
+    document.querySelector('[data-sentence="' + currentSentence + '"]')?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+  }, [currentSentence, followReading])
 
   const statusLine = useMemo(() => {
     if (status === 'loading') {
@@ -537,7 +542,7 @@ export function ArticleNarration({
   }, [status, progress, pausedHere, sentences, detail, voice])
 
   return (
-    <div className="article-narration" role="region" aria-label="Lettura articolo">
+    <div className={advanced ? "article-narration selecting" : "article-narration reading"} role="region" aria-label="Lettura articolo">
       <header className="article-narration-head">
         <button type="button" className="btn ghost small" onClick={onClose}>
           ← Chiudi
@@ -566,6 +571,7 @@ export function ArticleNarration({
             </div>
           )}
 
+          <label className="follow-reading"><input type="checkbox" checked={followReading} onChange={event => setFollowReading(event.target.checked)} /> Segui la lettura</label>
           <button type="button" className="btn ghost small" aria-expanded={advanced} onClick={() => setAdvanced(value => !value)}>
             {advanced ? 'Chiudi selezione del brano' : 'Scegli inizio e fine del brano'}
           </button>
@@ -923,11 +929,6 @@ export function ArticleNarration({
                     .filter(Boolean)
                     .join(' ')}
                   data-sentence={sentence.index}
-                  ref={(el) => {
-                    if (el && isCurrent) {
-                      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-                    }
-                  }}
                 >
                   <button
                     type="button"
@@ -954,8 +955,8 @@ export function ArticleNarration({
                         sentence.index === endSentence &&
                         wi === endWord
                       return (
-                        <button
-                          key={wordItem.id}
+                        <span key={wordItem.id} className="word-wrapper">
+                        {advanced ? <button
                           type="button"
                           className={[
                             'article-word',
@@ -970,7 +971,8 @@ export function ArticleNarration({
                           onClick={() => pickWord(sentence.index, wi)}
                         >
                           {wordItem.text}
-                        </button>
+                        </button> : <span className={wordCurrent ? 'reading-word is-current' : 'reading-word'}>{wordItem.text} </span>}
+                        </span>
                       )
                     })}
                   </span>

@@ -41,6 +41,16 @@ export function useAudioPlayer() {
   const loadRevision = useRef(0)
   const offlineUrl = useRef<string | null>(null)
 
+  const repeat = useRef(false)
+  const speed = useRef(1)
+  const pendingSeek = useRef<(() => void) | null>(null)
+  const autoSkipTimer = useRef<number | null>(null)
+  const playNextRef = useRef<() => void>(() => {})
+  const clipEndRef = useRef<number | null>(null)
+  const clipStartRef = useRef<number | null>(null)
+  const clipEndingRef = useRef(false)
+  const stopAfterCurrentRef = useRef(false)
+
   useEffect(() => {
     const audio = new Audio()
     audio.preload = 'auto'
@@ -143,16 +153,6 @@ export function useAudioPlayer() {
     }
   }, [])
 
-  const repeat = useRef(false)
-  const speed = useRef(1)
-  const pendingSeek = useRef<(() => void) | null>(null)
-  const autoSkipTimer = useRef<number | null>(null)
-  const playNextRef = useRef<() => void>(() => {})
-  const clipEndRef = useRef<number | null>(null)
-  const clipStartRef = useRef<number | null>(null)
-  const clipEndingRef = useRef(false)
-  const stopAfterCurrentRef = useRef(false)
-
   const loadAndPlay = useCallback(async (track: Track, autoplay: boolean, position = 0) => {
     const audio = audioRef.current
     if (!audio) return
@@ -238,7 +238,7 @@ export function useAudioPlayer() {
     void loadAndPlay(list[next], true)
   }, [loadAndPlay])
 
-  playNextRef.current = playNext
+  useEffect(() => { playNextRef.current = playNext }, [playNext])
 
   useEffect(() => onPauseMusic(() => {
     audioRef.current?.pause()
@@ -529,6 +529,7 @@ export function useAudioPlayer() {
     moveTrack(from, from + delta)
   }
 
+  const setRepeat = useCallback((enabled: boolean) => { repeat.current = enabled }, [])
   const current = state.playlist[state.index] ?? null
 
   return {
@@ -542,9 +543,7 @@ export function useAudioPlayer() {
     jumpTo,
     moveTrack,
     moveTrackBy,
-    setRepeat: (enabled: boolean) => {
-      repeat.current = enabled
-    },
+    setRepeat,
     getRepeat: () => repeat.current,
     setStopAfterCurrent: (enabled: boolean) => {
       stopAfterCurrentRef.current = enabled

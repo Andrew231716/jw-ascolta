@@ -214,9 +214,10 @@ export default function App() {
     (progressRecords[item.track?.id || item.id.replace(/^(article|video|music):/, '')]?.state || 'new') === libraryFilter)
 
 
+  const setRepeat = player.setRepeat
   useEffect(() => {
-    player.setRepeat(!stopAtEnd)
-  }, [stopAtEnd])
+    setRepeat(!stopAtEnd)
+  }, [stopAtEnd, setRepeat])
 
   useEffect(() => {
     setArticleBookmarks(listBookmarks())
