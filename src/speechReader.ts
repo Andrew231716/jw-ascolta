@@ -237,7 +237,7 @@ export async function speakSentences(
 
   // Match /api/tts MAX_CHARS so Isabella & co. get one continuous synthesis
   // whenever the selection fits; longer texts are stitched into a single MP3.
-  const maxLen = voice === 'personal' ? 300 : 2200
+  const maxLen = voice === 'personal' ? 300 : 1000
   const queue = buildContinuousQueue(texts, sentenceIndexes, firstWordOffset, maxLen)
 
   if (!queue.length) {
@@ -387,6 +387,7 @@ export async function speakSentences(
         currentSentence = queue[i].sentenceAtWord[0] ?? currentSentence
         emitProgress()
 
+        onStatus?.('loading', 'Preparazione lettura ' + (i + 1) + ' di ' + queue.length)
         const blob = await (blobs[i] ?? render(queue[i].text))
         blobs[i] = null
         if (aborted) return

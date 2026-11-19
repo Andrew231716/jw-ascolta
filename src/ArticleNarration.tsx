@@ -528,7 +528,7 @@ export function ArticleNarration({
 
   const statusLine = useMemo(() => {
     if (status === 'loading') {
-      return voice === 'jw' ? 'Avvio audio JW.org…' : 'Preparazione voce…'
+      return voice === 'jw' ? 'Avvio audio JW.org…' : detail.startsWith('Preparazione lettura') ? detail : 'Preparazione voce…'
     }
     if (status === 'speaking' && progress) {
       return `In lettura · frase ${progress.sentenceIndex + 1} di ${sentences.length}`

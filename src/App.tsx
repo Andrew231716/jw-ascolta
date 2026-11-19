@@ -776,6 +776,7 @@ export default function App() {
         <details className="chooser listening-tools">
           <summary>Opzioni riproduzione · timer e velocità</summary>
           <div className="listening-tools-body" aria-label="Timer di spegnimento">
+            <div className="music-only-tools" hidden={!player.current}>
             <button className="btn ghost small" onClick={() => player.skip(-15)}>−15 s</button>
             <button className="btn ghost small" onClick={() => player.skip(15)}>+15 s</button>
             <label>Velocità <select value={speed} onChange={(event) => {
@@ -799,13 +800,14 @@ export default function App() {
               />{' '}
               Ferma dopo questo brano
             </label>
+            </div>
             <label>
               <input
                 type="checkbox"
                 checked={timerFade}
                 onChange={(event) => setTimerFade(event.target.checked)}
               />{' '}
-              Fade-out del timer
+              Dissolvenza della musica al termine
             </label>
             <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
               {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}

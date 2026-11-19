@@ -845,7 +845,7 @@ export function ListeningLibrary({
                       </div>
                       <div className="result-actions">
                         <button className="btn primary small" onClick={() => openReader(item)}>
-                          {saved ? 'Riprendi' : 'Frase per frase'}
+                          {saved ? 'Riprendi' : 'Ascolta articolo'}
                         </button>
                         <a href={item.source} target="_blank" rel="noreferrer">
                           JW.org ↗
