@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { hasPersonalVoiceToken, setPersonalVoiceToken, forgetVoiceSample, hasVoiceSample, saveVoiceSample } from './personalVoice'
 import { localResponse, offlineAudio, recordProgress, rememberArticle } from './offlineLibrary.ts'
 import { DownloadButton } from './DownloadButton'
@@ -889,12 +890,12 @@ export function ArticleNarration({
           )}
 
           {audioUrl && <DownloadButton track={{ id: articleId, title: article?.title || title, url: audioUrl, duration: audioDuration, sectionSlug: 'tutto', sectionName: 'Articolo' }} />}
-          {(status === 'speaking' || status === 'paused') && <aside className="narration-dock" aria-label="Lettore compatto articolo">
+          {(status === 'speaking' || status === 'paused') && createPortal(<aside className="narration-dock" aria-label="Lettore compatto articolo">
             <strong>{article?.title || title}</strong>
             <button className="icon-btn" aria-label="Indietro di 15 secondi" onClick={() => skipNarrationAudio(-15)}>−15</button>
             <button className="icon-btn" aria-label={status === 'speaking' ? 'Pausa lettura' : 'Riprendi lettura'} onClick={togglePause}>{status === 'speaking' ? '❚❚' : '▶'}</button>
             <button className="icon-btn" aria-label="Avanti di 15 secondi" onClick={() => skipNarrationAudio(15)}>+15</button>
-          </aside>}
+          </aside>, document.body)}
           {voice === 'personal' && <button className="btn ghost small" onClick={() => void clearGeneratedAudio().then(() => setShareNote('Audio generati rimossi dal dispositivo'))}>Libera memoria degli audio generati</button>}
           {status === 'error' && voice === 'personal' && <div className="narration-controls">
             <button className="btn ghost" type="button" onClick={async () => {

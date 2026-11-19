@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   SECTIONS,
@@ -643,7 +644,7 @@ export default function App() {
               <a href="https://jw-ascolta.vercel.app">jw-ascolta.vercel.app</a>.
             </p>
           )}
-          <nav className="top-nav" aria-label="Sezioni principali">
+          {createPortal(<nav className="top-nav" aria-label="Sezioni principali">
             <button type="button" className="nav-link" aria-pressed={homeTab === 'music'}
               onClick={() => {
                 setHomeTab('music')
@@ -661,7 +662,7 @@ export default function App() {
                 setVideoBookmarks(listVideoBookmarks())
                 setHomeTab('library')
               }}>Libreria</button>
-          </nav>
+          </nav>, document.body)}
           {homeTab === 'music' && <div className="cta-row">
             <button className="btn primary" disabled={catalogLoading}
               onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
