@@ -1462,10 +1462,12 @@ code {
 
 .browse-card {
   display: grid;
-  gap: 0.35rem;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 0.75rem;
   align-content: start;
-  min-height: 6.5rem;
-  padding: 0.9rem 1rem;
+  align-items: start;
+  min-height: 4.75rem;
+  padding: 0.85rem 0.95rem;
   border: 1px solid var(--line);
   border-radius: 1rem;
   background:
@@ -1475,6 +1477,8 @@ code {
   text-align: left;
   cursor: pointer;
   transition: border-color 0.15s ease, transform 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
 }
 
 .browse-card:hover,
@@ -1485,31 +1489,105 @@ code {
 }
 
 .browse-section-card {
-  min-height: 8.5rem;
+  min-height: 5.5rem;
 }
 
-.browse-card-kicker {
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--text) 62%, transparent);
+.browse-card-mark {
+  grid-row: 1 / span 3;
+  display: grid;
+  place-items: center;
+  width: 2.35rem;
+  height: 2.35rem;
+  border-radius: 0.7rem;
+  background: color-mix(in srgb, var(--gold) 22%, transparent);
+  color: var(--gold);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 1;
 }
 
 .browse-card-title {
-  font-size: 1.02rem;
-  font-weight: 700;
+  grid-column: 2;
+  font-size: 0.98rem;
+  font-weight: 650;
   line-height: 1.3;
 }
 
 .browse-card-meta {
-  font-size: 0.85rem;
+  grid-column: 2;
+  font-size: 0.82rem;
   color: color-mix(in srgb, var(--text) 72%, transparent);
 }
 
-.browse-card-hint {
-  font-size: 0.82rem;
-  line-height: 1.35;
-  color: color-mix(in srgb, var(--text) 68%, transparent);
+.browse-crumbs {
+  font-size: 0.95rem;
+}
+
+.browse-crumb-btn,
+.browse-crumb-current {
+  color: var(--text);
+}
+
+.browse-crumb-btn {
+  color: var(--gold);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.more-actions {
+  width: 100%;
+}
+
+.more-actions summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.listening-tools summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+.listening-tools-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.library-subhead {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 1rem;
+  font-weight: 650;
+}
+
+.library-empty-line {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.library-empty {
+  margin-top: 0.35rem;
+}
+
+.title-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.title-row > input {
+  flex: 1;
 }
 
 .browse-list-head {

@@ -50,24 +50,6 @@ type VideoReaderTarget = Entry & { subtitleUrl: string }
 
 type Crumb = { label: string; action?: () => void }
 
-const themes = [
-  ['Famiglia e figli', /famigli|matrimoni|figli|genitor|coniug|educaz/],
-  ['Giovani e scuola', /giovan|ragazz|adolescent|scuola|bullismo|student/],
-  ['Emozioni e difficoltà', /ansia|paura|depress|stress|lutto|dolore|solitudin|preoccup|perdon/],
-  ['Fede e preghiera', /preghier|pregare|fiducia|\bfede\b|speranza|geova/],
-  ['Bibbia e studio', /bibbi|scrittur|versett|prof[eé]z|studio|parola di dio/],
-  ['Ministero e congregazione', /predic|minister|congregaz|adunanz|testimonianz/],
-  ['Creazione e natura', /creazion|natura|animal|piante|pianeta|scienza/],
-] as const
-
-function tags(entry: Entry) {
-  const title = normalizeTitle(entry.title)
-  const description = normalizeTitle(entry.description ?? '')
-  const matched = themes.filter(([, pattern]) => pattern.test(title))
-  const relevant = matched.length ? matched : themes.filter(([, pattern]) => pattern.test(description))
-  return relevant.length ? relevant.map(([name]) => name) : ['Altri temi']
-}
-
 function canOpenText(entry: Entry) {
   if (entry.canRead) return true
   if (entry.docid) return true
@@ -95,13 +77,6 @@ async function api<T>(
   const response = await fetch('/api/listening?' + params, { signal })
   if (!response.ok) throw new Error('Catalogo non disponibile. Riprova tra poco.')
   return response.json()
-}
-
-function contentLabel(kind: Kind, itemKind?: BrowseKind) {
-  if (kind === 'videos' || itemKind === 'videos') return 'Video'
-  if (itemKind === 'book') return 'Capitolo'
-  if (itemKind === 'magazine') return 'Articolo rivista'
-  return 'Articolo'
 }
 
 export function ListeningLibrary({
@@ -149,7 +124,6 @@ export function ListeningLibrary({
   const [loadingBrowse, setLoadingBrowse] = useState(true)
   const [query, setQuery] = useState(initialSearch)
   const [submitted, setSubmitted] = useState('')
-  const [theme, setTheme] = useState('')
   const [official, setOfficial] = useState('')
   const [reader, setReader] = useState<ReaderTarget | null>(initialReader)
   const [videoReader, setVideoReader] = useState<VideoReaderTarget | null>(null)
@@ -183,7 +157,6 @@ export function ListeningLibrary({
     setNext(null)
     setOffset(0)
     setError('')
-    setTheme('')
     setOfficial('')
     setLoading(true)
     setSubmitted(nextQuery)
@@ -285,7 +258,6 @@ export function ListeningLibrary({
     setOffset(0)
     setNext(null)
     setError('')
-    setTheme('')
     setOfficial('')
   }
 
@@ -326,11 +298,8 @@ export function ListeningLibrary({
   }
 
   const visible = tracks.filter(
-    (track) =>
-      (!theme || tags(track).includes(theme)) &&
-      (!official || track.topics.includes(official)),
+    (track) => !official || track.topics.includes(official),
   )
-  const themeOptions = [...new Set(tracks.flatMap(tags))].sort()
   const officialOptions = [...new Set(tracks.flatMap((track) => track.topics.slice(1)))].sort()
 
   const crumbs: Crumb[] = [{ label: 'Ascolta', action: goHome }]
@@ -383,9 +352,15 @@ export function ListeningLibrary({
     )
   }
 
+  const sectionFilter = query.trim()
+    ? (activeSection?.items ?? []).filter((item) =>
+        normalizeTitle(item.name).includes(normalizeTitle(query)),
+      )
+    : activeSection?.items ?? []
+
   return (
     <section className="chooser listening-library">
-      <h2>Articoli, libri e video</h2>
+      <h2>Ascolta</h2>
 
       {bookmarks.length > 0 && (
         <div className="narration-resume-banner">
@@ -443,8 +418,8 @@ export function ListeningLibrary({
       <div className="mode-toggle" role="group" aria-label="Tipo di contenuto">
         {(
           [
-            ['articles', 'Catalogo testi'],
-            ['videos', 'Audio dei video'],
+            ['articles', 'Testi'],
+            ['videos', 'Video'],
           ] as const
         ).map(([id, name]) => (
           <button
@@ -470,6 +445,20 @@ export function ListeningLibrary({
           event.preventDefault()
           const title = normalizeTitle(query) ? query.trim() : ''
           if (!title && !topic) return
+          // While browsing a section grid, filter locally first when possible.
+          if (atSection && activeSection && title) {
+            const localHits = activeSection.items.filter((item) =>
+              normalizeTitle(item.name).includes(normalizeTitle(title)),
+            )
+            if (localHits.length === 1) {
+              openItem(localHits[0])
+              return
+            }
+            if (localHits.length > 1) {
+              // Keep section view; sectionFilter already narrows the grid.
+              return
+            }
+          }
           resetList()
           setSectionId('')
           if (!topic) {
@@ -484,7 +473,11 @@ export function ListeningLibrary({
         <input
           type="search"
           aria-label="Cerca parola o frase"
-          placeholder="Cerca titolo, capitolo, frase…"
+          placeholder={
+            atSection
+              ? 'Filtra in questa sezione…'
+              : 'Cerca titolo o frase…'
+          }
           maxLength={120}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -541,10 +534,7 @@ export function ListeningLibrary({
 
       {atHome && !loadingBrowse && (
         <>
-          <p className="section-lede">
-            Naviga come su JW.org: apri una sezione, poi un libro o una categoria, poi il
-            capitolo o l’articolo. Puoi ascoltare l’audio JW oppure scegliere da frase a frase.
-          </p>
+          <p className="section-lede">Scegli una sezione, poi un titolo.</p>
           <div className="browse-grid browse-sections" role="list">
             {sections.map((section) => (
               <button
@@ -555,6 +545,9 @@ export function ListeningLibrary({
                 aria-label={`Apri sezione ${section.name}`}
                 onClick={() => openSection(section.id)}
               >
+                <span className="browse-card-mark" aria-hidden="true">
+                  {section.id === 'books' ? 'L' : section.id === 'magazines' ? 'R' : section.id === 'videos' ? 'V' : 'A'}
+                </span>
                 <span className="browse-card-title">{section.name}</span>
                 <span className="browse-card-meta">
                   {section.items.length}{' '}
@@ -566,7 +559,6 @@ export function ListeningLibrary({
                         ? 'categorie'
                         : 'sezioni'}
                 </span>
-                <span className="browse-card-hint">{section.hint}</span>
               </button>
             ))}
           </div>
@@ -575,9 +567,13 @@ export function ListeningLibrary({
 
       {atSection && activeSection && (
         <>
-          <p className="section-lede">{activeSection.hint}</p>
+          <p className="section-lede">
+            {query.trim()
+              ? `${sectionFilter.length} risultat${sectionFilter.length === 1 ? 'o' : 'i'} in ${activeSection.name}`
+              : activeSection.hint}
+          </p>
           <div className="browse-grid" role="list">
-            {activeSection.items.map((item) => (
+            {sectionFilter.map((item) => (
               <button
                 key={item.id}
                 type="button"
@@ -594,21 +590,18 @@ export function ListeningLibrary({
                 }
                 onClick={() => openItem(item)}
               >
-                <span className="browse-card-kicker">
-                  {item.kind === 'book'
-                    ? 'Libro'
-                    : item.kind === 'magazine'
-                      ? 'Rivista'
-                      : item.kind === 'videos'
-                        ? 'Video'
-                        : 'Categoria'}
+                <span className="browse-card-mark" aria-hidden="true">
+                  {(item.name.trim()[0] || '?').toLocaleUpperCase('it-IT')}
                 </span>
                 <span className="browse-card-title">{item.name}</span>
               </button>
             ))}
           </div>
+          {query.trim() && !sectionFilter.length && (
+            <p role="status">Nessun titolo corrisponde. Prova «Cerca» per cercare in tutto il catalogo.</p>
+          )}
           <button type="button" className="btn ghost small" onClick={goHome}>
-            ← Torna alle sezioni
+            ← Sezioni
           </button>
         </>
       )}
@@ -618,48 +611,32 @@ export function ListeningLibrary({
           {!submitted && topicName && (
             <p className="section-lede">
               {topicKind === 'book'
-                ? 'Scegli un capitolo: ascolta l’audio JW.org oppure apri il testo e indica da quale frase a quale frase.'
+                ? 'Tocca Ascolta oppure Frase per frase.'
                 : topicKind === 'videos'
-                  ? 'Scegli un video. Con «Frase per frase» usi i sottotitoli per l’inizio e la fine.'
-                  : 'Scegli un articolo. Se c’è l’MP3 JW.org ascoltalo subito; altrimenti apri il testo frase per frase.'}
+                  ? 'Tocca Ascolta oppure Frase per frase (sottotitoli).'
+                  : 'Tocca Ascolta se c’è l’MP3, altrimenti Frase per frase.'}
             </p>
           )}
 
           {!loading && (submitted || topic) && (tracks.length > 0 || pending.length > 0) && (
             <p className="section-lede audio-summary" role="status">
-              <span className="audio-badge has-audio">{visible.length} con audio JW.org</span>
-              {kind === 'articles' && (
-                <span className="audio-badge no-audio">{pending.length} senza audio JW.org</span>
+              <span className="audio-badge has-audio">{visible.length} con audio</span>
+              {kind === 'articles' && pending.length > 0 && (
+                <span className="audio-badge no-audio">{pending.length} solo testo</span>
               )}
-              {next !== null ? ' · puoi continuare' : ' · elenco completo'}
             </p>
           )}
 
-          {tracks.length > 0 && (
-            <>
-              {officialOptions.length > 0 && (
-                <label>
-                  Sottosezione
-                  <select value={official} onChange={(event) => setOfficial(event.target.value)}>
-                    <option value="">Tutte</option>
-                    {officialOptions.map((name) => (
-                      <option key={name}>{name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-              {themeOptions.length > 1 && (
-                <label>
-                  Tema suggerito
-                  <select value={theme} onChange={(event) => setTheme(event.target.value)}>
-                    <option value="">Tutti</option>
-                    {themeOptions.map((name) => (
-                      <option key={name}>{name}</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </>
+          {tracks.length > 0 && officialOptions.length > 0 && (
+            <label>
+              Sottosezione
+              <select value={official} onChange={(event) => setOfficial(event.target.value)}>
+                <option value="">Tutte</option>
+                {officialOptions.map((name) => (
+                  <option key={name}>{name}</option>
+                ))}
+              </select>
+            </label>
           )}
 
           {(topic || submitted) &&
@@ -667,12 +644,12 @@ export function ListeningLibrary({
             !loading &&
             !visible.length &&
             !pending.length &&
-            !error && <p>Nessun contenuto trovato in questo gruppo.</p>}
+            !error && <p>Nessun contenuto trovato.</p>}
 
           {visible.length > 0 && (
             <div className="available-audio">
               <div className="browse-list-head">
-                <h3>Con audio JW.org</h3>
+                <h3>{topicKind === 'book' ? 'Capitoli' : 'Con audio'}</h3>
                 <button className="btn primary small" onClick={() => onPlay(visible)}>
                   Ascolta tutti
                 </button>
@@ -685,12 +662,8 @@ export function ListeningLibrary({
                       <button className="queue-item" onClick={() => onPlay(visible, index)}>
                         <span className="q-title">{track.title}</span>
                         <span className="q-meta">
-                          <span className="audio-badge has-audio">Audio JW.org</span>
-                          {' · '}
-                          {contentLabel(kind, topicKind || undefined)}
-                          {track.matchIn ? ` · ${track.matchIn}` : ''}
-                          {' · '}
                           {formatDuration(track.duration)}
+                          {track.matchIn ? ` · ${track.matchIn}` : ''}
                         </span>
                       </button>
                       <div className="result-actions">
@@ -724,40 +697,45 @@ export function ListeningLibrary({
                             Frase per frase
                           </button>
                         )}
-                        <button className="btn ghost small" onClick={() => onAppend(track)}>
-                          In coda
-                        </button>
-                        <button
-                          className="btn ghost small"
-                          aria-pressed={later.some((item) => item.id === track.id)}
-                          onClick={() => onLater(track)}
-                        >
-                          {later.some((item) => item.id === track.id)
-                            ? 'Salvato · rimuovi'
-                            : 'Ascolta dopo'}
-                        </button>
-                        {collections.length > 0 && (
-                          <select
-                            value=""
-                            aria-label={`Salva ${track.title} in raccolta`}
-                            onChange={(event) => onSave(event.target.value, track)}
-                          >
-                            <option value="">Salva in raccolta</option>
-                            {collections.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.name}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                        <a
-                          href={track.source}
-                          target="_blank"
-                          rel="noreferrer"
-                          aria-label={`Apri ${track.title} su JW.org`}
-                        >
-                          JW.org ↗
-                        </a>
+                        <details className="more-actions">
+                          <summary>Altro</summary>
+                          <div className="result-actions">
+                            <button className="btn ghost small" onClick={() => onAppend(track)}>
+                              In coda
+                            </button>
+                            <button
+                              className="btn ghost small"
+                              aria-pressed={later.some((item) => item.id === track.id)}
+                              onClick={() => onLater(track)}
+                            >
+                              {later.some((item) => item.id === track.id)
+                                ? 'Rimuovi da dopo'
+                                : 'Ascolta dopo'}
+                            </button>
+                            {collections.length > 0 && (
+                              <select
+                                value=""
+                                aria-label={`Salva ${track.title} in raccolta`}
+                                onChange={(event) => onSave(event.target.value, track)}
+                              >
+                                <option value="">Salva in raccolta</option>
+                                {collections.map((item) => (
+                                  <option key={item.id} value={item.id}>
+                                    {item.name}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            <a
+                              href={track.source}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label={`Apri ${track.title} su JW.org`}
+                            >
+                              JW.org ↗
+                            </a>
+                          </div>
+                        </details>
                       </div>
                     </li>
                   )
@@ -768,10 +746,7 @@ export function ListeningLibrary({
 
           {pending.length > 0 && (
             <div className="pending-audio">
-              <h3>Senza audio JW.org</h3>
-              <p className="section-lede">
-                Nessun MP3 su JW.org: apri il testo e scegli da quale frase ascoltare.
-              </p>
+              <h3>Solo testo</h3>
               <ul className="library-list">
                 {pending.map((item) => {
                   const saved = loadBookmark(item.id)
@@ -780,19 +755,15 @@ export function ListeningLibrary({
                       <div className="queue-item">
                         <span className="q-title">{item.title}</span>
                         <span className="q-meta">
-                          <span className="audio-badge no-audio">Senza audio JW.org</span>
-                          {' · '}
-                          {item.reason}
-                          {item.matchIn ? ` · ${item.matchIn}` : ''}
-                          {saved ? ` · riprendi: «${saved.snippet}»` : ''}
+                          {saved ? `Riprendi · «${saved.snippet}»` : 'Senza MP3 JW.org'}
                         </span>
                       </div>
                       <div className="result-actions">
                         <button className="btn primary small" onClick={() => openReader(item)}>
-                          {saved ? 'Riprendi frase per frase' : 'Frase per frase'}
+                          {saved ? 'Riprendi' : 'Frase per frase'}
                         </button>
                         <a href={item.source} target="_blank" rel="noreferrer">
-                          Apri su JW.org ↗
+                          JW.org ↗
                         </a>
                       </div>
                     </li>

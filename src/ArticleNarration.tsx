@@ -653,12 +653,10 @@ export function ArticleNarration({
           </div>
 
           <p className="section-lede narration-hint">
-            Modalità <strong>{selectMode === 'start' ? 'Inizio' : 'Fine'}</strong>:
-            tocca una frase o una parola. Ora:{' '}
+            Tocca <strong>{selectMode === 'start' ? 'l’inizio' : 'la fine'}</strong>
             {endSentence === null
-              ? `da frase ${startSentence + 1} fino in fondo`
-              : `frasi ${startSentence + 1}–${endSentence + 1}`}
-            .
+              ? ` · da frase ${startSentence + 1}`
+              : ` · frasi ${startSentence + 1}–${endSentence + 1}`}
           </p>
           <p className="narration-range-legend" aria-hidden="true">
             <span>

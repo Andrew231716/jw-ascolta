@@ -174,7 +174,6 @@ export default function App() {
     ),
   )
   const [collectionName, setCollectionName] = useState('')
-  const [results, setResults] = useState<Track[] | null>(null)
   const [unifiedMusicHits, setUnifiedMusicHits] = useState<Track[] | null>(null)
   const [timer, setTimer] = useState<number | null>(null)
   const [minutes, setMinutes] = useState('30')
@@ -283,23 +282,6 @@ export default function App() {
     )
   }
 
-  async function searchCatalog() {
-    const query = normalizeTitle(titleQuery)
-    if (!query || catalogLoading) return
-    setCatalogLoading(true)
-    setResults(null)
-    setStatus(null)
-    try {
-      const { tracks, unavailable } = await fetchTracksForSlugs(effectiveSlugs)
-      if (unavailable.length) setStatus(`Categorie non disponibili: ${unavailable.join(", ")}`)
-      setResults(tracks.filter((track) => normalizeTitle(track.title).includes(query)))
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Catalogo non disponibile')
-    } finally {
-      setCatalogLoading(false)
-    }
-  }
-
   function playTracks(tracks: Track[], start = 0, position = 0) {
     setStatus(null)
     const track = tracks[start]
@@ -365,7 +347,6 @@ export default function App() {
     if (!q || catalogLoading) return
     setCatalogLoading(true)
     setUnifiedMusicHits(null)
-    setResults(null)
     setStatus(null)
     try {
       const { tracks, unavailable } = await fetchTracksForSlugs(['tutto'])
@@ -488,7 +469,6 @@ export default function App() {
   }, [initial.autoplay, initial.mode, initial.sections, initial.title])
 
   function toggleSection(slug: SectionSlug) {
-    setResults(null)
     if (slug === 'tutto') {
       setSelected(['tutto'])
       return
@@ -643,14 +623,13 @@ export default function App() {
                 setArticleBookmarks(listBookmarks())
                 setVideoBookmarks(listVideoBookmarks())
                 setHomeTab('listening')
-              }}>Articoli e video</button>
+              }}>Ascolta</button>
             <button type="button" className="nav-link" aria-pressed={homeTab === 'library'}
               onClick={() => {
                 setRecent(listRecent())
                 setVideoBookmarks(listVideoBookmarks())
                 setHomeTab('library')
-              }}>La mia libreria</button>
-            <button type="button" className="nav-link" onClick={openSiriGuide}>Siri e CarPlay</button>
+              }}>Libreria</button>
           </nav>
           {homeTab === 'music' && <div className="cta-row">
             <button className="btn primary" disabled={catalogLoading}
@@ -763,52 +742,55 @@ export default function App() {
       </section>
 
       {player.current && (
-        <section className="chooser listening-tools" aria-label="Timer di spegnimento">
-          <button className="btn ghost small" onClick={() => player.skip(-15)}>−15 s</button>
-          <button className="btn ghost small" onClick={() => player.skip(15)}>+15 s</button>
-          <label>Velocità <select value={speed} onChange={(event) => {
-            const rate = Number(event.target.value)
-            setSpeed(rate)
-            player.setSpeed(rate)
-          }}>{[0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label>
-          <label>
-            <input
-              type="checkbox"
-              checked={stopAtEnd}
-              onChange={(event) => setStopAtEnd(event.target.checked)}
-            />{' '}
-            Ferma a fine coda
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={player.stopAfterCurrent}
-              onChange={(event) => player.setStopAfterCurrent(event.target.checked)}
-            />{' '}
-            Ferma dopo questo brano
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              checked={timerFade}
-              onChange={(event) => setTimerFade(event.target.checked)}
-            />{' '}
-            Fade-out del timer
-          </label>
-          <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
-            {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}
-          </select></label>
-          <button className="btn ghost small" onClick={() =>
-            setTimer(timer === null ? Date.now() + Number(minutes) * 60_000 : null)}>
-            {timer === null ? 'Avvia timer' : 'Annulla timer'}
-          </button>
-          {player.playlist.length > 0 && (
-            <button type="button" className="btn ghost small" onClick={exportQueueM3u}>
-              Esporta coda M3U
+        <details className="chooser listening-tools">
+          <summary>Opzioni riproduzione · timer e velocità</summary>
+          <div className="listening-tools-body" aria-label="Timer di spegnimento">
+            <button className="btn ghost small" onClick={() => player.skip(-15)}>−15 s</button>
+            <button className="btn ghost small" onClick={() => player.skip(15)}>+15 s</button>
+            <label>Velocità <select value={speed} onChange={(event) => {
+              const rate = Number(event.target.value)
+              setSpeed(rate)
+              player.setSpeed(rate)
+            }}>{[0.75, 1, 1.25, 1.5, 2].map((rate) => <option key={rate} value={rate}>{rate}×</option>)}</select></label>
+            <label>
+              <input
+                type="checkbox"
+                checked={stopAtEnd}
+                onChange={(event) => setStopAtEnd(event.target.checked)}
+              />{' '}
+              Ferma a fine coda
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={player.stopAfterCurrent}
+                onChange={(event) => player.setStopAfterCurrent(event.target.checked)}
+              />{' '}
+              Ferma dopo questo brano
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={timerFade}
+                onChange={(event) => setTimerFade(event.target.checked)}
+              />{' '}
+              Fade-out del timer
+            </label>
+            <label>Timer <select value={minutes} onChange={(event) => setMinutes(event.target.value)}>
+              {[15, 30, 45, 60].map((value) => <option key={value} value={value}>{value} min</option>)}
+            </select></label>
+            <button className="btn ghost small" onClick={() =>
+              setTimer(timer === null ? Date.now() + Number(minutes) * 60_000 : null)}>
+              {timer === null ? 'Avvia timer' : 'Annulla timer'}
             </button>
-          )}
-          {timer !== null && <span role="status">Pausa alle {new Date(timer).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span>}
-        </section>
+            {player.playlist.length > 0 && (
+              <button type="button" className="btn ghost small" onClick={exportQueueM3u}>
+                Esporta coda M3U
+              </button>
+            )}
+            {timer !== null && <span role="status">Pausa alle {new Date(timer).toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })}</span>}
+          </div>
+        </details>
       )}
 
       {!siriFocus && <div hidden={!libraryOpen}>
@@ -838,7 +820,7 @@ export default function App() {
 
       {!siriFocus && homeTab === 'music' && (
       <section className="chooser" id="scegli">
-        <h2>Cerca in tutta l’app</h2>
+        <h2>Cerca un brano</h2>
         <form className="title-row" onSubmit={(event) => {
           event.preventDefault()
           void runUnifiedSearch()
@@ -846,17 +828,24 @@ export default function App() {
           <input
             type="search"
             aria-label="Cerca musica, articoli o video"
-            placeholder="Parola in musica, articoli o video…"
+            placeholder="Titolo o parola…"
             value={unifiedQuery}
             maxLength={120}
-            onChange={(event) => setUnifiedQuery(event.target.value)}
+            onChange={(event) => {
+              setUnifiedQuery(event.target.value)
+              setTitleQuery(event.target.value)
+              setUnifiedMusicHits(null)
+            }}
           />
           <button className="btn primary" disabled={!unifiedQuery.trim() || catalogLoading}>Cerca</button>
         </form>
+        {status && <p role="status">{status}</p>}
         {unifiedMusicHits && (
           <div className="unified-results">
             <p className="section-lede">
-              Musica: {unifiedMusicHits.length} risultat{unifiedMusicHits.length === 1 ? 'o' : 'i'}
+              {unifiedMusicHits.length
+                ? `${unifiedMusicHits.length} brani trovati`
+                : 'Nessun brano in musica con questa parola.'}
             </p>
             {unifiedMusicHits.length > 0 && (
               <TrackList tracks={unifiedMusicHits.slice(0, 40)} onPlay={(i) => playTracks(unifiedMusicHits, i)} />
@@ -866,42 +855,20 @@ export default function App() {
                 setListeningKind('articles')
                 setListeningSearch(unifiedQuery.trim())
                 setHomeTab('listening')
-              }}>Cerca anche negli articoli</button>
+              }}>Cerca in libri e articoli</button>
               <button type="button" className="btn ghost small" onClick={() => {
                 setListeningKind('videos')
                 setListeningSearch(unifiedQuery.trim())
                 setHomeTab('listening')
-              }}>Cerca anche nei video</button>
+              }}>Cerca nei video</button>
             </div>
           </div>
         )}
-        <h2>Sezioni</h2>
-        <p className="section-lede">
-          Seleziona una o più sezioni, oppure avvia da un titolo: poi continua
-          da solo con il resto della coda.
-        </p>
 
-        <label className="title-search">
-          <span>Cerca un brano</span>
-          <div className="title-row">
-            <input
-              type="search"
-              placeholder="es. Sorgerà"
-              value={titleQuery}
-              onChange={(e) => { setTitleQuery(e.target.value); setResults(null) }}
-              onKeyDown={(e) => { if (e.key === 'Enter') void searchCatalog() }}
-            />
-            <button className="btn primary" disabled={catalogLoading || !titleQuery.trim()}
-              onClick={() => void searchCatalog()}>Cerca</button>
-          </div>
-        </label>
-        {status && <p role="status">{status}</p>}
-        {results && (
-          <div aria-live="polite">
-            <p>{results.length ? `Risultati: ${results.length}` : 'Nessun risultato nelle sezioni selezionate.'}</p>
-            <TrackList tracks={results} onPlay={(i) => playTracks(results, i)} />
-          </div>
-        )}
+        <h2>Scegli cosa ascoltare</h2>
+        <p className="section-lede">
+          Tocca una o più sezioni, poi riproduci.
+        </p>
 
         <div className="mode-toggle" role="group" aria-label="Modalità">
           <button
@@ -926,7 +893,6 @@ export default function App() {
             onClick={() => toggleSection('tutto')}
           >
             <span className="section-name">Tutto</span>
-            <span className="section-hint">Tutte le sezioni audio</span>
           </button>
           {SECTIONS.map((s) => (
             <button
@@ -939,7 +905,6 @@ export default function App() {
               onClick={() => toggleSection(s.slug)}
             >
               <span className="section-name">{s.shortName}</span>
-              <span className="section-hint">{s.name}</span>
             </button>
           ))}
         </div>
@@ -957,24 +922,6 @@ export default function App() {
             }
           >
             {catalogLoading ? 'Carico…' : 'Riproduci selezione'}
-          </button>
-          <button type="button" className="btn ghost" onClick={openSiriGuide}>
-            Siri e CarPlay
-          </button>
-        </div>
-      </section>
-      )}
-
-      {!siriFocus && homeTab === 'music' && (
-      <section className="siri-teaser" id="siri">
-        <h2>Siri e CarPlay</h2>
-        <p className="section-lede">
-          Tutti i comandi (sezione, casuale, per titolo) funzionano in auto con
-          Apri URL → /api/carplay. Guida sotto.
-        </p>
-        <div className="cta-row">
-          <button type="button" className="btn primary" onClick={openSiriGuide}>
-            Come configurarlo
           </button>
         </div>
       </section>
@@ -1061,55 +1008,63 @@ export default function App() {
 
       {!siriFocus && myLibraryOpen && (
         <section className="chooser" id="libreria" aria-label="Libreria personale">
-          <h2>Ascoltati di recente</h2>
+          <h2>La tua libreria</h2>
+          {!recent.length && !videoBookmarks.length && !later.length && !favorites.length && !collections.length && (
+            <p className="section-lede library-empty">
+              Qui trovi recenti, preferiti e liste salvate. Inizia da Musica o Ascolta.
+            </p>
+          )}
+
+          <h3 className="library-subhead">Recenti</h3>
           {recent.length ? (
             <ul className="library-list">
-              {recent.slice(0, 20).map((item) => (
+              {recent.slice(0, 12).map((item) => (
                 <li key={item.id + item.updatedAt}>
                   <button className="queue-item" onClick={() => playRecentItem(item)}>
                     <span className="q-title">{item.title}</span>
                     <span className="q-meta">
                       {item.kind === 'music' ? 'Musica' : item.kind === 'video' ? 'Video' : 'Articolo'}
-                      {item.query ? ` · «${item.query}»` : ''}
                     </span>
                   </button>
                 </li>
               ))}
             </ul>
           ) : (
-            <p>Qui compariranno gli ultimi ascolti.</p>
+            <p className="library-empty-line">Ancora nessun ascolto recente.</p>
           )}
-          <h2>Brani video salvati</h2>
-          {videoBookmarks.length ? (
-            <ul className="library-list">
-              {videoBookmarks.map((bookmark) => (
-                <li key={bookmark.trackId}>
-                  <button className="queue-item" onClick={() => playVideoBookmark(bookmark)}>
-                    <span className="q-title">{bookmark.title}</span>
-                    <span className="q-meta">«{bookmark.snippet}»</span>
-                  </button>
-                  <button
-                    className="btn ghost small"
-                    aria-label={`Elimina ${bookmark.title}`}
-                    onClick={() => {
-                      clearVideoBookmark(bookmark.trackId)
-                      setVideoBookmarks(listVideoBookmarks())
-                    }}
-                  >
-                    Elimina
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>Salva un brano da «Sottotitoli · brano» per ritrovarlo qui.</p>
+
+          {videoBookmarks.length > 0 && (
+            <>
+              <h3 className="library-subhead">Brani video</h3>
+              <ul className="library-list">
+                {videoBookmarks.map((bookmark) => (
+                  <li key={bookmark.trackId}>
+                    <button className="queue-item" onClick={() => playVideoBookmark(bookmark)}>
+                      <span className="q-title">{bookmark.title}</span>
+                      <span className="q-meta">«{bookmark.snippet}»</span>
+                    </button>
+                    <button
+                      className="btn ghost small"
+                      aria-label={`Elimina ${bookmark.title}`}
+                      onClick={() => {
+                        clearVideoBookmark(bookmark.trackId)
+                        setVideoBookmarks(listVideoBookmarks())
+                      }}
+                    >
+                      Elimina
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
-          <h2>Ascolta dopo</h2>
+
+          <h3 className="library-subhead">Ascolta dopo</h3>
           {later.length ? (
             <>
               <div className="queue-actions">
                 <button type="button" className="btn ghost small" onClick={clearLaterQueue}>
-                  Svuota «Ascolta dopo»
+                  Svuota lista
                 </button>
               </div>
               <TrackList
@@ -1121,15 +1076,19 @@ export default function App() {
               />
             </>
           ) : (
-            <p>Salva un articolo o un video dal catalogo per ritrovarlo qui.</p>
+            <p className="library-empty-line">Vuota · salva qualcosa da Ascolta.</p>
           )}
-          <h2>Preferiti e raccolte</h2>
+
+          <h3 className="library-subhead">Preferiti</h3>
           {favorites.length ? (
             <>
               <button className="btn ghost small" onClick={() => playTracks(favorites)}>Riproduci preferiti</button>
               <TrackList tracks={favorites} onPlay={(i) => playTracks(favorites, i)} onRemove={toggleFavorite} />
             </>
-          ) : <p>Aggiungi un brano ai preferiti dal lettore.</p>}
+          ) : (
+            <p className="library-empty-line">Aggiungi un brano dal lettore con ★.</p>
+          )}
+
           {playlist.length > 0 && (
             <form className="title-row" onSubmit={(event) => {
               event.preventDefault()
@@ -1143,31 +1102,36 @@ export default function App() {
               <button className="btn primary small" disabled={!collectionName.trim()}>Salva coda</button>
             </form>
           )}
-          <ul className="library-list">
-            {collections.map((collection) => (
-              <li className="collection-editor" key={collection.id}>
-                <details>
-                  <summary>Modifica {collection.name}</summary>
-                  <form className="title-row" onSubmit={(event) => {
-                    event.preventDefault()
-                    const name = String(new FormData(event.currentTarget).get('name') ?? '').trim()
-                    if (name) setCollections((list) => list.map((item) => item.id === collection.id ? { ...item, name } : item))
-                  }}>
-                    <input name="name" aria-label="Nome raccolta" defaultValue={collection.name} maxLength={80} required />
-                    <button className="btn ghost small">Rinomina</button>
-                  </form>
-                  <TrackList tracks={collection.tracks} onPlay={(index) => playTracks(collection.tracks, index)}
-                    onRemove={(track) => setCollections((list) => list.map((item) => item.id === collection.id
-                      ? { ...item, tracks: item.tracks.filter((entry) => entry.id !== track.id) } : item))} />
-                </details>
-                <button className="queue-item" onClick={() => playTracks(collection.tracks)}>
-                  {collection.name} · {collection.tracks.length} brani
-                </button>
-                <button className="btn ghost small" aria-label={`Elimina ${collection.name}`}
-                  onClick={() => setCollections((list) => list.filter((item) => item.id !== collection.id))}>Elimina</button>
-              </li>
-            ))}
-          </ul>
+          {collections.length > 0 && (
+            <>
+              <h3 className="library-subhead">Raccolte</h3>
+              <ul className="library-list">
+                {collections.map((collection) => (
+                  <li className="collection-editor" key={collection.id}>
+                    <button className="queue-item" onClick={() => playTracks(collection.tracks)}>
+                      {collection.name} · {collection.tracks.length} brani
+                    </button>
+                    <details>
+                      <summary>Modifica</summary>
+                      <form className="title-row" onSubmit={(event) => {
+                        event.preventDefault()
+                        const name = String(new FormData(event.currentTarget).get('name') ?? '').trim()
+                        if (name) setCollections((list) => list.map((item) => item.id === collection.id ? { ...item, name } : item))
+                      }}>
+                        <input name="name" aria-label="Nome raccolta" defaultValue={collection.name} maxLength={80} required />
+                        <button className="btn ghost small">Rinomina</button>
+                      </form>
+                      <TrackList tracks={collection.tracks} onPlay={(index) => playTracks(collection.tracks, index)}
+                        onRemove={(track) => setCollections((list) => list.map((item) => item.id === collection.id
+                          ? { ...item, tracks: item.tracks.filter((entry) => entry.id !== track.id) } : item))} />
+                    </details>
+                    <button className="btn ghost small" aria-label={`Elimina ${collection.name}`}
+                      onClick={() => setCollections((list) => list.filter((item) => item.id !== collection.id))}>Elimina</button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </section>
       )}
 
