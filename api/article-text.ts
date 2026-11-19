@@ -73,10 +73,21 @@ export default async function handler(request: Request): Promise<Response> {
     const title = titleMatch ? strip(titleMatch[1]) : ''
 
     let body = ''
-    const bodyMatch = html.match(
-      /<div class="bodyTxt">([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/i,
-    )
-    if (bodyMatch) body = strip(bodyMatch[1])
+    const opening = /<div\b[^>]*\bclass=["'][^"']*\bbodyTxt\b[^"']*["'][^>]*>/i.exec(html)
+    if (opening) {
+      const start = opening.index + opening[0].length
+      const tags = /<\/?div\b[^>]*>/gi
+      tags.lastIndex = start
+      let depth = 1
+      let tag
+      while ((tag = tags.exec(html))) {
+        depth += tag[0][1] === '/' ? -1 : 1
+        if (depth === 0) {
+          body = strip(html.slice(start, tag.index))
+          break
+        }
+      }
+    }
     if (!body) {
       const paragraphs = Array.from(
         html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi),
