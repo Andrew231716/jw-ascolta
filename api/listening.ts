@@ -324,6 +324,42 @@ async function subtitleMatches(url: string, query: string): Promise<boolean> {
   }
 }
 
+/** Italian books with JW.org MP3 chapters (pub-media symbols). */
+const BOOK_AUDIO_PUBS: Array<[string, string]> = [
+  ['wcg', 'Cammina coraggiosamente con Dio'],
+  ['ia', 'Imitiamo la loro fede'],
+  ['jy', 'Gesù: la via, la verità, la vita'],
+  ['cf', 'Vieni, sii mio discepolo'],
+  ['cl', 'Avviciniamoci a Geova'],
+  ['rr', 'La pura adorazione di Geova'],
+  ['bh', 'Cosa insegna realmente la Bibbia?'],
+  ['bhs', 'Cosa ci insegna la Bibbia?'],
+  ['lff', 'Puoi vivere felice per sempre'],
+  ['lfb', 'Impariamo dai racconti della Bibbia'],
+  ['my', 'Il mio libro di racconti biblici'],
+  ['gt', 'Il più grande uomo che sia mai esistito'],
+  ['bt', 'Rendiamo completa testimonianza'],
+  ['lr', 'Impariamo dal grande Insegnante'],
+  ['lv', 'Mantenetevi nell’amore di Dio'],
+  ['lvs', 'Come rimanere nell’amore di Dio'],
+  ['fy', 'Il segreto della felicità familiare'],
+  ['kr', 'Il Regno di Dio è già una realtà'],
+  ['jd', 'Viviamo avendo in mente il giorno di Geova'],
+  ['jr', 'Dio ci parla per mezzo di Geremia'],
+  ['th', 'Applicati alla lettura e all’insegnamento'],
+  ['gwt', 'La Parola di Dio è verità'],
+]
+
+const MAGAZINE_PUBS = new Set(['w', 'g', 'wp'])
+
+function isCatalogPub(pub: string) {
+  return pub === 'mrt' || BOOK_AUDIO_PUBS.some(([id]) => id === pub)
+}
+
+function isAllowedPub(pub: string) {
+  return MAGAZINE_PUBS.has(pub) || isCatalogPub(pub)
+}
+
 async function articleTopics() {
   const html = await (await read(site + articles)).text()
   const topics = new Map<string, string>()
@@ -342,13 +378,14 @@ async function articleTopics() {
   const preferHtml = '/it/biblioteca-digitale/articoli/altri-argomenti/'
   const preferred = fromSite.filter((item) => item.id === preferHtml)
   const rest = fromSite.filter((item) => item.id !== preferHtml)
-  // Pubs with MP3 first, then HTML "Altri argomenti" (pending/TTS titles like Cybercrime),
+  // Pubs with MP3 first (magazines + books), then HTML "Altri argomenti",
   // then the remaining site sections.
   return [
     { id: 'pub:mrt', name: 'Altri argomenti (audio disponibili)' },
     { id: 'pub:w', name: 'Torre di Guardia — studio (audio)' },
     { id: 'pub:g', name: 'Svegliatevi! (audio)' },
     { id: 'pub:wp', name: 'Torre di Guardia — pubblica (audio)' },
+    ...BOOK_AUDIO_PUBS.map(([id, name]) => ({ id: `pub:${id}`, name: `${name} (audio)` })),
     ...preferred,
     ...rest,
   ]
@@ -628,55 +665,85 @@ function recentIssues(count: number) {
   return out
 }
 
+async function catalogPubTracks(
+  pub: string,
+  query: string,
+  offset: number,
+  topicName: string,
+  pageSize = 24,
+): Promise<{ tracks: LibraryTrack[]; pending: PendingItem[]; next: number | null; failed: number }> {
+  const params = new URLSearchParams({
+    output: 'json',
+    pub,
+    fileformat: 'MP3',
+    alllangs: '0',
+    langwritten: 'I',
+    txtCMSLang: 'I',
+  })
+  const data = await (await read(cdn + '/apis/pub-media/GETPUBMEDIALINKS?' + params)).json()
+  let files: Array<{
+    title?: string
+    duration?: number
+    docid?: number
+    track?: number
+    file?: { url?: string }
+    mimetype?: string
+  }> = data.files?.I?.MP3 ?? []
+  files = files.filter(
+    (item) =>
+      item.mimetype === 'audio/mpeg' &&
+      item.file?.url?.startsWith('https://') &&
+      (!query || matches(String(item.title || ''), query)),
+  )
+  const slice = files.slice(offset, offset + pageSize)
+  const source =
+    pub === 'mrt'
+      ? site + articles + 'altri-argomenti/'
+      : site + '/it/biblioteca-digitale/libri/'
+  return {
+    tracks: slice.map((item, index) => ({
+      id: `pub-${pub}-` + (item.docid || item.track || 'x') + '-' + (item.track || index),
+      title: String(item.title || topicName),
+      url: String(item.file!.url),
+      duration: Number(item.duration ?? 0),
+      topics: [topicName],
+      source,
+      matchIn: query ? 'Nel titolo' : undefined,
+    })),
+    pending: [],
+    next: offset + slice.length < files.length ? offset + slice.length : null,
+    failed: 0,
+  }
+}
+
+/** Search every Italian book with MP3 in one pass (used by global article search). */
+async function searchBookAudio(query: string) {
+  const results = await Promise.allSettled(
+    BOOK_AUDIO_PUBS.map(async ([id, name]) => catalogPubTracks(id, query, 0, name, 200)),
+  )
+  const tracks = [
+    ...new Map(
+      results
+        .flatMap((result) => (result.status === 'fulfilled' ? result.value.tracks : []))
+        .map((track) => [track.id, track]),
+    ).values(),
+  ]
+  return {
+    tracks,
+    pending: [] as PendingItem[],
+    failed: results.filter((result) => result.status === 'rejected').length,
+    more: false,
+  }
+}
+
 async function pubTracks(
   pub: string,
   query: string,
   offset: number,
   topicName: string,
 ): Promise<{ tracks: LibraryTrack[]; pending: PendingItem[]; next: number | null; failed: number }> {
-  if (pub === 'mrt') {
-    const params = new URLSearchParams({
-      output: 'json',
-      pub: 'mrt',
-      fileformat: 'MP3',
-      alllangs: '0',
-      langwritten: 'I',
-      txtCMSLang: 'I',
-    })
-    const data = await (await read(cdn + '/apis/pub-media/GETPUBMEDIALINKS?' + params)).json()
-    let files: Array<{
-      title?: string
-      duration?: number
-      docid?: number
-      track?: number
-      file?: { url?: string }
-      mimetype?: string
-    }> = data.files?.I?.MP3 ?? []
-    files = files.filter(
-      (item) =>
-        item.mimetype === 'audio/mpeg' &&
-        item.file?.url?.startsWith('https://') &&
-        (!query || matches(String(item.title || ''), query)),
-    )
-    const slice = files.slice(offset, offset + 24)
-    return {
-      tracks: slice.map((item, index) => ({
-        id:
-          'pub-mrt-' +
-          (item.docid || item.track || 'x') +
-          '-' +
-          (item.track || index),
-        title: String(item.title || 'Articolo'),
-        url: String(item.file!.url),
-        duration: Number(item.duration ?? 0),
-        topics: [topicName],
-        source: site + articles + 'altri-argomenti/',
-        matchIn: query ? 'Nel titolo' : undefined,
-      })),
-      pending: [],
-      next: offset + slice.length < files.length ? offset + slice.length : null,
-      failed: 0,
-    }
+  if (isCatalogPub(pub)) {
+    return catalogPubTracks(pub, query, offset, topicName)
   }
 
   // Magazines: look far enough back for study WT audio (e.g. giugno 2024 in late 2026).
@@ -765,13 +832,17 @@ export default async function handler(request: Request) {
     }
     if (kind === 'articles' && query && !topic) {
       const topics = await articleTopics()
+      // Skip individual book topics here: books are searched together on the first page.
+      const searchable = topics.filter(
+        (item) => !(item.id.startsWith('pub:') && isCatalogPub(item.id.slice(4)) && item.id !== 'pub:mrt'),
+      )
       // Larger batches so title search reaches HTML catalogs (e.g. Cybercrime) in one hop.
       const batchSize = 8
       const group = Math.floor(offset / 1024) * batchSize
       const page = offset % 1024
-      const batch = topics.slice(group, group + batchSize)
-      const results = await Promise.allSettled(
-        batch.map(async ({ id, name }) => {
+      const batch = searchable.slice(group, group + batchSize)
+      const results = await Promise.allSettled([
+        ...batch.map(async ({ id, name }) => {
           if (id.startsWith('pub:')) {
             const result = await pubTracks(id.slice(4), query, page * 24, name)
             return { ...result, more: result.next !== null }
@@ -779,7 +850,9 @@ export default async function handler(request: Request) {
           const result = await articleTracks(id, page * 12, query, name)
           return { ...result, more: result.next !== null }
         }),
-      )
+        // Always scan book MP3 catalogs on the first hop so chapters like wcg §17 appear.
+        ...(group === 0 && page === 0 ? [searchBookAudio(query)] : []),
+      ])
       const available = results.flatMap((result) =>
         result.status === 'fulfilled' ? [result.value] : [],
       )
@@ -811,7 +884,7 @@ export default async function handler(request: Request) {
           next:
             available.some((result) => result.more) && page < 1023
               ? offset + 1
-              : group + batch.length < topics.length
+              : group + batch.length < searchable.length
                 ? (Math.floor(group / batchSize) + 1) * 1024
                 : null,
         },
@@ -822,7 +895,7 @@ export default async function handler(request: Request) {
       if (!topic) return Response.json({ topics: await articleTopics() }, { headers })
       if (topic.startsWith('pub:')) {
         const pub = topic.slice(4)
-        if (!/^(mrt|w|g|wp)$/.test(pub)) return new Response(null, { status: 400 })
+        if (!isAllowedPub(pub)) return new Response(null, { status: 400 })
         const topicName =
           (await articleTopics()).find((item) => item.id === topic)?.name || pub
         const result = await pubTracks(pub, query, offset, topicName)

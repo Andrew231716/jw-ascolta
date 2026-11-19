@@ -348,7 +348,8 @@ export function ListeningLibrary({
         <button className="btn primary" disabled={!query.trim() && !topic}>Cerca</button>
       </form>
       <p className="section-lede">
-        La ricerca guarda titoli, testo degli articoli e sottotitoli dei video.
+        La ricerca guarda titoli e testo degli articoli, capitoli dei libri con
+        audio JW.org, e sottotitoli dei video.
       </p>
       <label>Categoria JW.org (facoltativa)
         <select value={topic} onChange={(event) => selectTopic(event.target.value)}>
