@@ -542,142 +542,70 @@ export function ArticleNarration({
             </div>
           )}
 
-          <div className="narration-toolbar" role="group" aria-label="Selezione brano">
-            <button
-              type="button"
-              className={selectMode === 'start' ? 'chip active' : 'chip'}
-              aria-pressed={selectMode === 'start'}
-              onClick={() => setSelectMode('start')}
-            >
-              Inizio
-            </button>
-            <button
-              type="button"
-              className={selectMode === 'end' ? 'chip active' : 'chip'}
-              aria-pressed={selectMode === 'end'}
-              onClick={() => setSelectMode('end')}
-            >
-              Fine
-            </button>
-            <button type="button" className="btn ghost small" onClick={resetRange}>
-              Tutto l’articolo
-            </button>
-          </div>
-
-          <div className="narration-options">
-            <label>
-              Voce
-              <select
-                value={voice}
-                onChange={(e) => {
-                  audioChunksRef.current = []
-                  speechRef.current?.stop()
-                  const next = e.target.value as NarrationVoiceId
-                  setVoice(next)
-                  setStatus('idle')
-                  setDetail('')
-                  if (next !== 'jw') {
-                    try { localStorage.setItem('jw-narrator', next) } catch { /* session only */ }
-                  }
-                }}
-                disabled={status === 'loading' || status === 'speaking'}
-              >
-                {hasOriginal && (
-                  <option value="jw">Audio JW.org (originale)</option>
+          <div
+            className={`narration-step-card mode-${selectMode}`}
+            role="status"
+            aria-live="polite"
+          >
+            <p className="narration-step-title">
+              {selectMode === 'start'
+                ? '1 · Dove vuoi iniziare?'
+                : endSentence === null
+                  ? '2 · Dove vuoi fermarti?'
+                  : 'Brano pronto'}
+            </p>
+            <p className="narration-step-body">
+              {selectMode === 'start'
+                ? 'Tocca nel testo la frase (o la parola) da cui partire.'
+                : endSentence === null
+                  ? 'Tocca la frase finale, oppure premi Ascolta per arrivare fino in fondo.'
+                  : `Ascolterai dalle frasi ${startSentence + 1} a ${endSentence + 1}.`}
+            </p>
+            <div className="narration-range-summary">
+              <div>
+                <span className="range-label">Inizio</span>
+                <strong>
+                  Frase {startSentence + 1}
+                  {startWord > 0 ? ` · parola ${startWord + 1}` : ''}
+                </strong>
+                <em>«{snippetAt(sentences, startSentence, startWord)}»</em>
+              </div>
+              <div>
+                <span className="range-label">Fine</span>
+                <strong>
+                  {endSentence === null
+                    ? 'Fino alla fine'
+                    : `Frase ${endSentence + 1}${endWord !== null ? ` · parola ${endWord + 1}` : ''}`}
+                </strong>
+                {endSentence !== null && (
+                  <em>«{snippetAt(sentences, endSentence, endWord ?? 0)}»</em>
                 )}
-                {NARRATION_VOICES.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {voice === 'jw' && (
-              <p className="section-lede">
-                Ascolti la registrazione ufficiale JW.org dal punto che scegli, frase per frase.
-              </p>
-            )}
-            {voice === 'personal' && <fieldset disabled={status === 'loading' || status === 'speaking' || status === 'paused'}>
-              <legend>Il tuo memo vocale</legend>
-              <p>Premendo Ascolta, il memo e il testo selezionato vengono inviati alla demo pubblica Chatterbox. La demo può avere code o limiti di utilizzo.</p>
-              <label>{sampleReady ? 'Sostituisci memo' : 'Scegli un memo da File'}
-                <input type="file" accept="audio/*,.m4a,.wav,.mp3" onChange={async e => {
-                  const file = e.target.files?.[0]
-                  if (!file) return
-                  e.target.value = ''
-                  try { await saveVoiceSample(file); setSampleReady(true); setSampleError('') }
-                  catch (err) { setSampleError(err instanceof Error ? err.message : 'Salvataggio non riuscito.') }
-                }} />
-              </label>
-              {sampleReady && <small>Memo salvato su questo dispositivo.</small>}
-              {sampleReady && <button type="button" className="btn ghost" onClick={() => {
-                forgetVoiceSample(); setSampleReady(false)
-              }}>Rimuovi memo dal dispositivo</button>}
-              <details>
-                <summary>Quota del mio account Hugging Face</summary>
-                <p>Il token viene usato solo per Chatterbox e viene dimenticato ricaricando la pagina.</p>
-                <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Gestisci token su Hugging Face</a>
-                {tokenSet ? <button type="button" className="btn ghost" onClick={() => {
-                  setPersonalVoiceToken(''); setTokenSet(false)
-                }}>Scollega account</button> : <div><label>Token personale
-                  <input type="password" autoComplete="off" autoCapitalize="none" spellCheck={false}
-                    ref={tokenField} />
-                  </label>
-                  <button type="button" className="btn ghost" onClick={() => {
-                      const value = tokenField.current?.value.trim()
-                      if (!value) return
-                      if (!/^hf_[a-zA-Z0-9]+$/.test(value)) {
-                        setSampleError('Inserisci un token Hugging Face che inizi con hf_.')
-                        return
-                      }
-                      setPersonalVoiceToken(value); setTokenSet(true); setSampleError('')
-                    }}>Usa token</button>
-                </div>}
-              </details>
-              {sampleError && <p role="alert">{sampleError}</p>}
-            </fieldset>}
-            <label>
-              Velocità
-              <select
-                value={rate}
-                onChange={(e) => setRate(e.target.value as NarrationRate)}
-                disabled={status === 'loading' || status === 'speaking'}
+              </div>
+            </div>
+            <div className="narration-toolbar" role="group" aria-label="Cosa stai scegliendo">
+              <button
+                type="button"
+                className={selectMode === 'start' ? 'chip active start-chip' : 'chip'}
+                aria-pressed={selectMode === 'start'}
+                onClick={() => setSelectMode('start')}
               >
-                {NARRATION_RATES.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.label}
-                  </option>
-                ))}
-              </select>
-            </label>
+                Cambia inizio
+              </button>
+              <button
+                type="button"
+                className={selectMode === 'end' ? 'chip active end-chip' : 'chip'}
+                aria-pressed={selectMode === 'end'}
+                onClick={() => setSelectMode('end')}
+              >
+                Cambia fine
+              </button>
+              <button type="button" className="btn ghost small" onClick={resetRange}>
+                Tutto il testo
+              </button>
+            </div>
           </div>
-
-          <p className="section-lede narration-hint">
-            Tocca <strong>{selectMode === 'start' ? 'l’inizio' : 'la fine'}</strong>
-            {endSentence === null
-              ? ` · da frase ${startSentence + 1}`
-              : ` · frasi ${startSentence + 1}–${endSentence + 1}`}
-          </p>
-          <p className="narration-range-legend" aria-hidden="true">
-            <span>
-              <span className="range-swatch start" />
-              Inizio
-            </span>
-            <span>
-              <span className="range-swatch end" />
-              Fine / brano
-            </span>
-            <span>
-              <span className="range-swatch play" />
-              In lettura
-            </span>
-          </p>
 
           <div className="narration-controls">
-            <button type="button" className="btn primary" disabled={status === 'loading' || !sentences.length}
-              onClick={() => void startPlayback(false, true)}>
-              {transcript === undefined ? 'Leggi tutto l’articolo' : 'Leggi tutti i sottotitoli'}
-            </button>
             {status === 'speaking' || status === 'paused' || status === 'error' ? (
               <>
                 <button type="button" className="btn primary" onClick={togglePause}>
@@ -700,24 +628,214 @@ export function ArticleNarration({
                 disabled={status === 'loading' || !sentences.length}
                 onClick={() => void startPlayback(false)}
               >
-                {status === 'loading' ? 'Preparazione…' : 'Ascolta il brano selezionato'}
+                {status === 'loading'
+                  ? 'Preparazione…'
+                  : endSentence === null
+                    ? `Ascolta dalla frase ${startSentence + 1}`
+                    : `Ascolta frasi ${startSentence + 1}–${endSentence + 1}`}
               </button>
             )}
-            {status === 'loading' && <button type="button" className="btn ghost" onClick={stopPlayback}>Annulla</button>}
-            {transcript === undefined && <button type="button" className="btn ghost small" onClick={() => void shareRange()}>
-              Condividi brano
-            </button>}
-            {voice !== 'jw' && (
-              <button type="button" className="btn ghost small" onClick={downloadAudio}>
-                {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica audio'}
+            {status === 'loading' && (
+              <button type="button" className="btn ghost" onClick={stopPlayback}>
+                Annulla
               </button>
             )}
-            {voice === 'jw' && audioUrl && (
-              <a className="btn ghost small" href={audioUrl} target="_blank" rel="noreferrer">
-                Apri MP3 JW.org ↗
-              </a>
-            )}
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={status === 'loading' || !sentences.length}
+              onClick={() => void startPlayback(false, true)}
+            >
+              {transcript === undefined ? 'Ascolta tutto' : 'Ascolta tutti i sottotitoli'}
+            </button>
           </div>
+
+          <details className="narration-more">
+            <summary>Voce, velocità e altro</summary>
+            <div className="narration-options">
+              <label>
+                Voce
+                <select
+                  value={voice}
+                  onChange={(e) => {
+                    audioChunksRef.current = []
+                    speechRef.current?.stop()
+                    const next = e.target.value as NarrationVoiceId
+                    setVoice(next)
+                    setStatus('idle')
+                    setDetail('')
+                    if (next !== 'jw') {
+                      try {
+                        localStorage.setItem('jw-narrator', next)
+                      } catch {
+                        /* session only */
+                      }
+                    }
+                  }}
+                  disabled={status === 'loading' || status === 'speaking'}
+                >
+                  {hasOriginal && (
+                    <option value="jw">Audio JW.org (originale)</option>
+                  )}
+                  {NARRATION_VOICES.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {voice === 'jw' && (
+                <p className="section-lede">
+                  Registrazione ufficiale JW.org sul brano scelto.
+                </p>
+              )}
+              {voice === 'personal' && (
+                <fieldset
+                  disabled={
+                    status === 'loading' || status === 'speaking' || status === 'paused'
+                  }
+                >
+                  <legend>Il tuo memo vocale</legend>
+                  <p>
+                    Premendo Ascolta, il memo e il testo selezionato vengono inviati alla demo
+                    pubblica Chatterbox.
+                  </p>
+                  <label>
+                    {sampleReady ? 'Sostituisci memo' : 'Scegli un memo da File'}
+                    <input
+                      type="file"
+                      accept="audio/*,.m4a,.wav,.mp3"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0]
+                        if (!file) return
+                        e.target.value = ''
+                        try {
+                          await saveVoiceSample(file)
+                          setSampleReady(true)
+                          setSampleError('')
+                        } catch (err) {
+                          setSampleError(
+                            err instanceof Error ? err.message : 'Salvataggio non riuscito.',
+                          )
+                        }
+                      }}
+                    />
+                  </label>
+                  {sampleReady && <small>Memo salvato su questo dispositivo.</small>}
+                  {sampleReady && (
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      onClick={() => {
+                        forgetVoiceSample()
+                        setSampleReady(false)
+                      }}
+                    >
+                      Rimuovi memo dal dispositivo
+                    </button>
+                  )}
+                  <details>
+                    <summary>Quota del mio account Hugging Face</summary>
+                    <p>
+                      Il token viene usato solo per Chatterbox e viene dimenticato ricaricando la
+                      pagina.
+                    </p>
+                    <a
+                      href="https://huggingface.co/settings/tokens"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Gestisci token su Hugging Face
+                    </a>
+                    {tokenSet ? (
+                      <button
+                        type="button"
+                        className="btn ghost"
+                        onClick={() => {
+                          setPersonalVoiceToken('')
+                          setTokenSet(false)
+                        }}
+                      >
+                        Scollega account
+                      </button>
+                    ) : (
+                      <div>
+                        <label>
+                          Token personale
+                          <input
+                            type="password"
+                            autoComplete="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
+                            ref={tokenField}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="btn ghost"
+                          onClick={() => {
+                            const value = tokenField.current?.value.trim()
+                            if (!value) return
+                            if (!/^hf_[a-zA-Z0-9]+$/.test(value)) {
+                              setSampleError(
+                                'Inserisci un token Hugging Face che inizi con hf_.',
+                              )
+                              return
+                            }
+                            setPersonalVoiceToken(value)
+                            setTokenSet(true)
+                            setSampleError('')
+                          }}
+                        >
+                          Usa token
+                        </button>
+                      </div>
+                    )}
+                  </details>
+                  {sampleError && <p role="alert">{sampleError}</p>}
+                </fieldset>
+              )}
+              <label>
+                Velocità
+                <select
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value as NarrationRate)}
+                  disabled={status === 'loading' || status === 'speaking'}
+                >
+                  {NARRATION_RATES.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {transcript === undefined && (
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  onClick={() => void shareRange()}
+                >
+                  Condividi brano
+                </button>
+              )}
+              {voice !== 'jw' && (
+                <button type="button" className="btn ghost small" onClick={downloadAudio}>
+                  {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica audio'}
+                </button>
+              )}
+              {voice === 'jw' && audioUrl && (
+                <a className="btn ghost small" href={audioUrl} target="_blank" rel="noreferrer">
+                  Apri MP3 JW.org ↗
+                </a>
+              )}
+            </div>
+          </details>
+
+          <p className="narration-text-prompt" aria-hidden="true">
+            {selectMode === 'start'
+              ? '↓ Tocca qui sotto la frase di inizio'
+              : '↓ Tocca qui sotto la frase di fine'}
+          </p>
 
           {status !== 'error' && statusLine && (
             <p className="narration-status" role="status">
@@ -780,10 +898,10 @@ export function ArticleNarration({
                     onClick={() => pickSentence(sentence.index)}
                     aria-label={`Frase ${sentence.index + 1}${isStart ? ', inizio' : ''}${endSentence !== null && sentence.index === endSentence ? ', fine' : ''}`}
                   >
-                    {sentence.index + 1}
-                    {isStart && <span className="sentence-marker">Inizio</span>}
+                    <span className="sentence-num">{sentence.index + 1}</span>
+                    {isStart && <span className="sentence-marker start">INIZIO</span>}
                     {endSentence !== null && sentence.index === endSentence && (
-                      <span className="sentence-marker">Fine</span>
+                      <span className="sentence-marker end">FINE</span>
                     )}
                   </button>
                   <span className="sentence-words">
