@@ -81,14 +81,9 @@ export default async function handler(request: Request): Promise<Response> {
       const paragraphs = Array.from(
         html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi),
         (m) => strip(m[1]),
-      ).filter((p) => p.length > 40)
+      ).filter(Boolean)
       body = paragraphs.join('\n\n')
     }
-
-    // Soft cap for TTS payloads
-    const max = 28000
-    const truncated = body.length > max
-    if (truncated) body = body.slice(0, max)
 
     if (!title && !body) {
       return Response.json({ error: 'empty' }, { status: 404 })
@@ -99,7 +94,7 @@ export default async function handler(request: Request): Promise<Response> {
         title,
         text: body,
         source: site + path,
-        truncated,
+        truncated: false,
         chars: body.length,
       },
       {

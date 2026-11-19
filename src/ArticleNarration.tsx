@@ -34,11 +34,13 @@ export function ArticleNarration({
   articleId,
   title,
   source,
+  transcript,
   onClose,
 }: {
   articleId: string
   title: string
   source: string
+  transcript?: string
   onClose: () => void
 }) {
   const [loading, setLoading] = useState(true)
@@ -94,12 +96,14 @@ export function ArticleNarration({
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    const path = new URL(source).pathname
-    fetch('/api/article-text?' + new URLSearchParams({ path }), { signal: controller.signal })
-      .then(async (res) => {
-        if (!res.ok) throw new Error('Impossibile leggere il testo dell’articolo.')
-        return res.json() as Promise<{ title?: string; text?: string; source?: string }>
-      })
+    const content = transcript !== undefined
+      ? Promise.resolve({ text: transcript, title, source })
+      : fetch('/api/article-text?' + new URLSearchParams({ path: new URL(source).pathname }), { signal: controller.signal })
+          .then(async res => {
+            if (!res.ok) throw new Error('Impossibile leggere il testo dell’articolo.')
+            return res.json() as Promise<ArticlePayload>
+          })
+    content
       .then((data) => {
         if (!data.text?.trim()) throw new Error('Testo articolo non trovato.')
         const payload: ArticlePayload = {
@@ -112,12 +116,12 @@ export function ArticleNarration({
         setSentences(units)
 
         const params = new URLSearchParams(window.location.search)
-        const qStart = Number(params.get('ns'))
-        const qEnd = Number(params.get('ne'))
+        const qStart = params.has('ns') ? Number(params.get('ns')) : NaN
+        const qEnd = params.has('ne') ? Number(params.get('ne')) : NaN
         const saved = loadBookmark(articleId)
         setBookmark(saved)
 
-        if (Number.isFinite(qStart) && qStart >= 0 && qStart < units.length) {
+        if (transcript === undefined && Number.isFinite(qStart) && qStart >= 0 && qStart < units.length) {
           setStartSentence(qStart)
           setStartWord(0)
           if (Number.isFinite(qEnd) && qEnd >= qStart && qEnd < units.length) {
@@ -135,9 +139,6 @@ export function ArticleNarration({
               : null,
           )
           setEndWord(saved.endWordIndex)
-          if (saved.voice && NARRATION_VOICES.some((v) => v.id === saved.voice)) {
-            setVoice(saved.voice as NarrationVoiceId)
-          }
           if (saved.rate && NARRATION_RATES.some((r) => r.id === saved.rate)) {
             setRate(saved.rate as NarrationRate)
           }
@@ -155,10 +156,10 @@ export function ArticleNarration({
         setLoading(false)
       })
     return () => controller.abort()
-  }, [articleId, source, title])
+  }, [articleId, source, title, transcript])
 
   function persistFromProgress(p: SpeakProgress | null, units = sentencesRef.current) {
-    if (!p || !units.length) return
+    if (transcript !== undefined || !p || !units.length) return
     const meta = articleMeta.current
     const range = rangeRef.current
     const next: NarrationBookmark = {
@@ -265,7 +266,7 @@ export function ArticleNarration({
     }
   }
 
-  async function startPlayback(fromBookmark = false) {
+  async function startPlayback(fromBookmark = false, entire = false) {
     if (!sentences.length || status === 'loading') return
     if (voice === 'personal' && !sampleReady) {
       setSampleError('Scegli prima il memo con la tua voce.')
@@ -280,6 +281,11 @@ export function ArticleNarration({
     let to = endSentence
     let toWord = endWord
 
+    if (entire) {
+      from = word = 0
+      to = toWord = null
+      resetRange()
+    }
     if (fromBookmark && bookmark) {
       from = bookmark.sentenceIndex
       word = bookmark.wordIndex
@@ -510,6 +516,7 @@ export function ArticleNarration({
                   catch (err) { setSampleError(err instanceof Error ? err.message : 'Salvataggio non riuscito.') }
                 }} />
               </label>
+              {sampleReady && <small>Memo salvato su questo dispositivo.</small>}
               {sampleReady && <button type="button" className="btn ghost" onClick={() => {
                 forgetVoiceSample(); setSampleReady(false)
               }}>Rimuovi memo dal dispositivo</button>}
@@ -555,6 +562,10 @@ export function ArticleNarration({
           </p>
 
           <div className="narration-controls">
+            <button type="button" className="btn primary" disabled={status === 'loading' || !sentences.length}
+              onClick={() => void startPlayback(false, true)}>
+              {transcript === undefined ? 'Leggi tutto l’articolo' : 'Leggi tutti i sottotitoli'}
+            </button>
             {status === 'speaking' || status === 'paused' || status === 'error' ? (
               <>
                 <button type="button" className="btn primary" onClick={togglePause}>
@@ -581,9 +592,9 @@ export function ArticleNarration({
               </button>
             )}
             {status === 'loading' && <button type="button" className="btn ghost" onClick={stopPlayback}>Annulla</button>}
-            <button type="button" className="btn ghost small" onClick={() => void shareRange()}>
+            {transcript === undefined && <button type="button" className="btn ghost small" onClick={() => void shareRange()}>
               Condividi brano
-            </button>
+            </button>}
             <button type="button" className="btn ghost small" onClick={downloadAudio}>
               {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica audio'}
             </button>

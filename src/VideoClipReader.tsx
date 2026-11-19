@@ -1,3 +1,4 @@
+import { ArticleNarration } from './ArticleNarration'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Track } from './catalog'
 import {
@@ -50,6 +51,7 @@ export function VideoClipReader({
   currentTime?: number
   playingTrackId?: string | null
 }) {
+  const [readerOpen, setReaderOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [cues, setCues] = useState<SubtitleCue[]>([])
@@ -207,6 +209,12 @@ export function VideoClipReader({
     [cues, query],
   )
 
+  if (readerOpen && cues.length && !loading && !error) {
+    return <ArticleNarration key={track.id} articleId={'subtitles:' + track.id}
+      title={track.title} source={track.source || track.url}
+      transcript={cues.map(cue => cue.text).join(' ')} onClose={() => setReaderOpen(false)} />
+  }
+
   return (
     <div className="article-narration video-clip-reader" role="region" aria-label="Sottotitoli video">
       <header className="article-narration-head">
@@ -230,6 +238,9 @@ export function VideoClipReader({
 
       {!loading && !error && (
         <>
+          <button type="button" className="btn primary" onClick={() => setReaderOpen(true)}>
+            Ascolta i sottotitoli con la voce salvata
+          </button>
           <div className="narration-toolbar" role="group" aria-label="Selezione brano">
             <button
               type="button"
