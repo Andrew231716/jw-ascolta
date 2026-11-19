@@ -10,13 +10,17 @@ import { formatDuration, normalizeTitle, type Track } from './catalog'
 import { VideoClipReader } from './VideoClipReader'
 
 type Kind = 'articles' | 'videos'
-type Topic = { id: string; name: string }
+type BrowseKind = 'book' | 'magazine' | 'articles' | 'videos'
+type BrowseItem = { id: string; name: string; kind: BrowseKind }
+type BrowseSection = { id: string; name: string; hint: string; items: BrowseItem[] }
 type Entry = Track & {
   source: string
   topics: string[]
   description?: string
   matchIn?: string
   subtitleUrl?: string
+  docid?: string
+  canRead?: boolean
 }
 type Pending = {
   id: string
@@ -34,6 +38,8 @@ type Page = {
 
 type ReaderTarget = { id: string; title: string; source: string }
 type VideoReaderTarget = Entry & { subtitleUrl: string }
+
+type Crumb = { label: string; action?: () => void }
 
 const themes = [
   ['Famiglia e figli', /famigli|matrimoni|figli|genitor|coniug|educaz/],
@@ -53,13 +59,40 @@ function tags(entry: Entry) {
   return relevant.length ? relevant.map(([name]) => name) : ['Altri temi']
 }
 
-async function api<T>(kind: Kind, signal: AbortSignal, topic?: string, offset = 0, query = ''): Promise<T> {
-  const params = new URLSearchParams({ kind, offset: String(offset) })
-  if (topic) params.set('topic', topic)
-  if (query) params.set('q', query)
+function canOpenText(entry: Entry) {
+  if (entry.canRead) return true
+  if (entry.docid) return true
+  try {
+    const path = new URL(entry.source).pathname
+    return (
+      path.includes('/biblioteca-digitale/articoli/') ||
+      path.includes('/cosa-dice-la-Bibbia/') ||
+      /\/biblioteca-digitale\/libri\/.+\/.+\/.+/.test(path)
+    )
+  } catch {
+    return false
+  }
+}
+
+async function api<T>(
+  kind: Kind,
+  signal: AbortSignal,
+  opts: { topic?: string; offset?: number; query?: string; browse?: boolean } = {},
+): Promise<T> {
+  const params = new URLSearchParams({ kind, offset: String(opts.offset ?? 0) })
+  if (opts.topic) params.set('topic', opts.topic)
+  if (opts.query) params.set('q', opts.query)
+  if (opts.browse) params.set('browse', '1')
   const response = await fetch('/api/listening?' + params, { signal })
   if (!response.ok) throw new Error('Catalogo non disponibile. Riprova tra poco.')
   return response.json()
+}
+
+function contentLabel(kind: Kind, itemKind?: BrowseKind) {
+  if (kind === 'videos' || itemKind === 'videos') return 'Video'
+  if (itemKind === 'book') return 'Capitolo'
+  if (itemKind === 'magazine') return 'Articolo rivista'
+  return 'Articolo'
 }
 
 export function ListeningLibrary({
@@ -92,8 +125,11 @@ export function ListeningLibrary({
   initialSearch?: string
 }) {
   const [kind, setKind] = useState<Kind>(initialKind)
-  const [topics, setTopics] = useState<Topic[]>([])
+  const [sections, setSections] = useState<BrowseSection[]>([])
+  const [sectionId, setSectionId] = useState('')
   const [topic, setTopic] = useState('')
+  const [topicName, setTopicName] = useState('')
+  const [topicKind, setTopicKind] = useState<BrowseKind | ''>('')
   const [tracks, setTracks] = useState<Entry[]>([])
   const [pending, setPending] = useState<Pending[]>([])
   const [next, setNext] = useState<number | null>(null)
@@ -101,7 +137,7 @@ export function ListeningLibrary({
   const [retry, setRetry] = useState(0)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [loadingTopics, setLoadingTopics] = useState(true)
+  const [loadingBrowse, setLoadingBrowse] = useState(true)
   const [query, setQuery] = useState(initialSearch)
   const [submitted, setSubmitted] = useState('')
   const [theme, setTheme] = useState('')
@@ -110,6 +146,12 @@ export function ListeningLibrary({
   const [videoReader, setVideoReader] = useState<VideoReaderTarget | null>(null)
   const [bookmarks, setBookmarks] = useState<NarrationBookmark[]>(() => listBookmarks())
   const [bookmarkTick, setBookmarkTick] = useState(0)
+
+  const browsing = !submitted
+  const activeSection = sections.find((item) => item.id === sectionId) ?? null
+  const atHome = browsing && !sectionId && !topic
+  const atSection = browsing && Boolean(sectionId) && !topic
+  const atTopic = Boolean(topic) || Boolean(submitted)
 
   useEffect(() => {
     if (initialReader) setReader(initialReader)
@@ -123,6 +165,10 @@ export function ListeningLibrary({
     lastExternalSearch.current = nextQuery
     setKind(initialKind)
     setQuery(nextQuery)
+    setSectionId('')
+    setTopic('')
+    setTopicName('')
+    setTopicKind('')
     setTracks([])
     setPending([])
     setNext(null)
@@ -149,11 +195,22 @@ export function ListeningLibrary({
   useEffect(() => {
     if (!active) return
     const controller = new AbortController()
-    setLoadingTopics(true)
-    api<{ topics: Topic[] }>(kind, controller.signal)
-      .then((data) => { setTopics(data.topics); setLoadingTopics(false) })
+    setLoadingBrowse(true)
+    api<{ sections: BrowseSection[] }>(kind, controller.signal, { browse: true })
+      .then((data) => {
+        const nextSections = data.sections ?? []
+        setSections(nextSections)
+        // Video: una sola sezione → mostra subito le categorie (come JW.org).
+        if (kind === 'videos' && nextSections.length === 1 && !submitted && !topic) {
+          setSectionId(nextSections[0].id)
+        }
+        setLoadingBrowse(false)
+      })
       .catch((err) => {
-        if (!controller.signal.aborted) { setError(err.message); setLoadingTopics(false) }
+        if (!controller.signal.aborted) {
+          setError(err.message)
+          setLoadingBrowse(false)
+        }
       })
     return () => controller.abort()
   }, [active, kind])
@@ -161,20 +218,36 @@ export function ListeningLibrary({
   useEffect(() => {
     if (!topic && !submitted) return
     const controller = new AbortController()
-    const sectionName = topics.find((item) => item.id === topic)?.name ?? ''
-    api<Page>(kind, controller.signal, topic, offset, submitted)
+    api<Page>(kind, controller.signal, {
+      topic: topic || undefined,
+      offset,
+      query: submitted || undefined,
+    })
       .then((data) => {
         if (controller.signal.aborted) return
-        const entries = data.tracks.map((track): Entry => ({
-          ...track, sectionSlug: 'tutto', sectionName: track.topics.at(-1) ?? sectionName,
-        }))
-        setTracks((previous) => [...new Map([...previous, ...entries].map((entry) => [entry.id, entry])).values()])
-        setPending((previous) => [...new Map([
-          ...previous,
-          ...(data.pending ?? []),
-        ].map((item) => [item.id, item])).values()])
+        const entries = data.tracks.map(
+          (track): Entry => ({
+            ...track,
+            sectionSlug: 'tutto',
+            sectionName: track.topics.at(-1) ?? topicName,
+          }),
+        )
+        setTracks((previous) =>
+          [...new Map([...previous, ...entries].map((entry) => [entry.id, entry])).values()],
+        )
+        setPending((previous) =>
+          [
+            ...new Map(
+              [...previous, ...(data.pending ?? [])].map((item) => [item.id, item]),
+            ).values(),
+          ],
+        )
         setNext(data.next)
-        setError(data.failed ? 'Alcuni audio non sono stati verificati. Riprova per completare questa pagina.' : '')
+        setError(
+          data.failed
+            ? 'Alcuni audio non sono stati verificati. Riprova per completare questa pagina.'
+            : '',
+        )
         if (
           !topic &&
           submitted &&
@@ -189,13 +262,15 @@ export function ListeningLibrary({
         setLoading(false)
       })
       .catch((err) => {
-        if (!controller.signal.aborted) { setError(err.message); setLoading(false) }
+        if (!controller.signal.aborted) {
+          setError(err.message)
+          setLoading(false)
+        }
       })
     return () => controller.abort()
-  }, [kind, topic, offset, retry, submitted])
+  }, [kind, topic, offset, retry, submitted, topicName])
 
-  function selectTopic(value: string) {
-    setTopic(value)
+  function resetList() {
     setTracks([])
     setPending([])
     setOffset(0)
@@ -203,20 +278,61 @@ export function ListeningLibrary({
     setError('')
     setTheme('')
     setOfficial('')
+  }
+
+  function goHome() {
+    setSectionId('')
+    setTopic('')
+    setTopicName('')
+    setTopicKind('')
     setSubmitted('')
-    setLoading(Boolean(value))
+    setQuery('')
+    resetList()
+    setLoading(false)
+  }
+
+  function openSection(id: string) {
+    setSectionId(id)
+    setTopic('')
+    setTopicName('')
+    setTopicKind('')
+    setSubmitted('')
+    setQuery('')
+    resetList()
+    setLoading(false)
+  }
+
+  function openItem(item: BrowseItem) {
+    setTopic(item.id)
+    setTopicName(item.name)
+    setTopicKind(item.kind)
+    setSubmitted('')
+    setQuery('')
+    resetList()
+    setLoading(true)
   }
 
   function openReader(target: ReaderTarget) {
     setReader(target)
   }
 
-  const visible = tracks.filter((track) =>
-    (!theme || tags(track).includes(theme)) &&
-    (!official || track.topics.includes(official)),
+  const visible = tracks.filter(
+    (track) =>
+      (!theme || tags(track).includes(theme)) &&
+      (!official || track.topics.includes(official)),
   )
   const themeOptions = [...new Set(tracks.flatMap(tags))].sort()
   const officialOptions = [...new Set(tracks.flatMap((track) => track.topics.slice(1)))].sort()
+
+  const crumbs: Crumb[] = [{ label: 'Ascolta', action: goHome }]
+  if (activeSection) {
+    crumbs.push({
+      label: activeSection.name,
+      action: topic || submitted ? () => openSection(activeSection.id) : undefined,
+    })
+  }
+  if (topicName) crumbs.push({ label: topicName })
+  if (submitted && !topic) crumbs.push({ label: `Ricerca «${submitted}»` })
 
   if (reader) {
     return (
@@ -257,12 +373,14 @@ export function ListeningLibrary({
 
   return (
     <section className="chooser listening-library">
-      <h2>Articoli e video</h2>
+      <h2>Articoli, libri e video</h2>
 
       {bookmarks.length > 0 && (
         <div className="narration-resume-banner">
           <div className="resume-banner-head">
-            <p><strong>In ascolto · riprendi</strong></p>
+            <p>
+              <strong>In ascolto · riprendi</strong>
+            </p>
             <button
               type="button"
               className="btn ghost small"
@@ -311,67 +429,75 @@ export function ListeningLibrary({
       )}
 
       <div className="mode-toggle" role="group" aria-label="Tipo di contenuto">
-        {([['articles', 'Articoli audio'], ['videos', 'Audio dei video']] as const).map(([id, name]) => (
-          <button key={id} className={id === kind ? 'chip active' : 'chip'} aria-pressed={id === kind} onClick={() => {
-            if (kind === id) return
-            selectTopic('')
-            setQuery('')
-            setTopics([])
-            setLoadingTopics(true)
-            setKind(id)
-          }}>{name}</button>
+        {(
+          [
+            ['articles', 'Libri e articoli'],
+            ['videos', 'Audio dei video'],
+          ] as const
+        ).map(([id, name]) => (
+          <button
+            key={id}
+            className={id === kind ? 'chip active' : 'chip'}
+            aria-pressed={id === kind}
+            onClick={() => {
+              if (kind === id) return
+              setKind(id)
+              goHome()
+              setLoadingBrowse(true)
+              setSections([])
+            }}
+          >
+            {name}
+          </button>
         ))}
       </div>
-      <form className="title-row" onSubmit={(event) => {
-        event.preventDefault()
-        const title = normalizeTitle(query) ? query.trim() : ''
-        if (!title && !topic) return
-        setTracks([])
-        setPending([])
-        setNext(null)
-        setOffset(0)
-        setError('')
-        setTheme('')
-        setOfficial('')
-        setLoading(true)
-        setSubmitted(title)
-        setRetry((value) => value + 1)
-      }}>
+
+      <form
+        className="title-row"
+        onSubmit={(event) => {
+          event.preventDefault()
+          const title = normalizeTitle(query) ? query.trim() : ''
+          if (!title && !topic) return
+          resetList()
+          setSectionId('')
+          if (!topic) {
+            setTopicName('')
+            setTopicKind('')
+          }
+          setLoading(true)
+          setSubmitted(title)
+          setRetry((value) => value + 1)
+        }}
+      >
         <input
           type="search"
           aria-label="Cerca parola o frase"
-          placeholder="Parola o frase nel titolo, testo o sottotitoli…"
+          placeholder="Cerca titolo, capitolo, frase…"
           maxLength={120}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <button className="btn primary" disabled={!query.trim() && !topic}>Cerca</button>
+        <button className="btn primary" disabled={!query.trim() && !topic}>
+          Cerca
+        </button>
       </form>
-      <p className="section-lede">
-        La ricerca guarda titoli e testo degli articoli, capitoli dei libri con
-        audio JW.org, e sottotitoli dei video.
-      </p>
-      <label>Categoria JW.org (facoltativa)
-        <select value={topic} onChange={(event) => selectTopic(event.target.value)}>
-          <option value="">Tutte le categorie</option>
-          {topics.map(({ id, name }) => <option key={id} value={id}>{name}</option>)}
-        </select>
-      </label>
-      {tracks.length > 0 && <>
-        {officialOptions.length > 0 && <label>Sottocategoria JW.org
-          <select value={official} onChange={(event) => setOfficial(event.target.value)}>
-            <option value="">Tutte</option>
-            {officialOptions.map((name) => <option key={name}>{name}</option>)}
-          </select>
-        </label>}
-        <label>Tema suggerito
-          <select value={theme} onChange={(event) => setTheme(event.target.value)}>
-            <option value="">Tutti</option>
-            {themeOptions.map((name) => <option key={name}>{name}</option>)}
-          </select>
-        </label>
-      </>}
-      {(loading || loadingTopics) && (
+
+      <nav className="browse-crumbs" aria-label="Percorso">
+        {crumbs.map((crumb, index) => (
+          <span key={`${crumb.label}-${index}`} className="browse-crumb">
+            {index > 0 && <span className="browse-crumb-sep" aria-hidden="true">›</span>}
+            {crumb.action ? (
+              <button type="button" className="browse-crumb-btn" onClick={crumb.action}>
+                {crumb.label}
+              </button>
+            ) : (
+              <span className="browse-crumb-current">{crumb.label}</span>
+            )}
+          </span>
+        ))}
+      </nav>
+
+      {(loading || loadingBrowse) && (
         <p role="status">
           {loading && submitted && !topic && offset > 0
             ? kind === 'videos'
@@ -379,141 +505,308 @@ export function ListeningLibrary({
               : `Cerco ancora in altre categorie JW.org… · ${tracks.length + pending.length} trovati finora`
             : loading && submitted
               ? `Ricerca «${submitted}» in corso…`
-              : 'Caricamento da JW.org…'}
+              : loading
+                ? 'Carico capitoli e articoli…'
+                : 'Caricamento da JW.org…'}
         </p>
       )}
-      {!loading && (submitted || topic) && (tracks.length > 0 || pending.length > 0) && (
-        <p className="section-lede audio-summary" role="status">
-          <span className="audio-badge has-audio">{visible.length} con audio JW.org</span>
-          {kind === 'articles' && (
-            <span className="audio-badge no-audio">{pending.length} senza audio JW.org</span>
-          )}
-          {next !== null ? ' · puoi continuare la ricerca' : ' · elenco completo'}
+
+      {error && (
+        <p role="alert">
+          {error}{' '}
+          <button
+            className="btn ghost small"
+            onClick={() => {
+              setLoading(Boolean(topic || submitted))
+              setError('')
+              setRetry((value) => value + 1)
+            }}
+          >
+            Riprova
+          </button>
         </p>
       )}
-      {error && <p role="alert">{error} <button className="btn ghost small" onClick={() => {
-        setLoading(Boolean(topic || submitted))
-        setError('')
-        setRetry((value) => value + 1)
-      }}>Riprova</button></p>}
-      {(topic || submitted) && next === null && !loading && !visible.length && !pending.length && !error && (
-        <p>Nessun contenuto trovato in questo gruppo.</p>
-      )}
-      {visible.length > 0 && (
-        <div className="available-audio">
-          <h3>Con audio JW.org</h3>
+
+      {atHome && !loadingBrowse && (
+        <>
           <p className="section-lede">
-            {kind === 'articles'
-              ? 'Questi articoli hanno già l’MP3 pubblicato da JW.org: puoi ascoltarli subito.'
-              : 'Audio del video da JW.org (stream a bassa risoluzione).'}
+            Naviga come su JW.org: apri una sezione, poi un libro o una categoria, poi il
+            capitolo o l’articolo. Puoi ascoltare l’audio JW oppure scegliere da frase a frase.
           </p>
-          <button className="btn primary small" onClick={() => onPlay(visible)}>Ascolta i risultati</button>
-          <ul className="library-list">
-            {visible.map((track, index) => (
-              <li className="listening-result has-jw-audio" key={track.id}>
-                <button className="queue-item" onClick={() => onPlay(visible, index)}>
-                  <span className="q-title">{track.title}</span>
-                  <span className="q-meta">
-                    <span className="audio-badge has-audio">Audio JW.org</span>
-                    {' · '}
-                    {kind === 'articles' ? 'Articolo' : 'Video'}
-                    {track.matchIn ? ` · ${track.matchIn}` : ''}
-                    {' · '}
-                    {formatDuration(track.duration)} · {tags(track).join(' · ')}
-                  </span>
-                </button>
-                <a href={track.source} target="_blank" rel="noreferrer" aria-label={`Apri ${track.title} su JW.org`}>JW.org ↗</a>
-                <div className="result-actions">
-                  <button className="btn ghost small" onClick={() => onAppend(track)}>Aggiungi alla coda</button>
-                  {kind === 'articles' && track.source.includes('/it/') && (
-                    <button
-                      className="btn ghost small"
-                      onClick={() =>
-                        openReader({
-                          id: track.id,
-                          title: track.title,
-                          source: track.source,
-                        })
-                      }
-                    >
-                      Lettura del testo
-                    </button>
-                  )}
-                  {kind === 'videos' && track.subtitleUrl && (
-                    <button
-                      className="btn ghost small"
-                      onClick={() =>
-                        setVideoReader({ ...track, subtitleUrl: track.subtitleUrl! })
-                      }
-                    >
-                      Sottotitoli · brano
-                    </button>
-                  )}
-                  <button className="btn ghost small" aria-pressed={later.some((item) => item.id === track.id)}
-                    onClick={() => onLater(track)}>{later.some((item) => item.id === track.id) ? 'Salvato · rimuovi' : 'Ascolta dopo'}</button>
-                  {collections.length > 0 && <select value="" aria-label={`Salva ${track.title} in raccolta`}
-                    onChange={(event) => onSave(event.target.value, track)}>
-                    <option value="">Salva in raccolta</option>
-                    {collections.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                  </select>}
-                </div>
-              </li>
+          <div className="browse-grid browse-sections" role="list">
+            {sections.map((section) => (
+              <button
+                key={section.id}
+                type="button"
+                className="browse-card browse-section-card"
+                role="listitem"
+                onClick={() => openSection(section.id)}
+              >
+                <span className="browse-card-title">{section.name}</span>
+                <span className="browse-card-meta">
+                  {section.items.length}{' '}
+                  {section.id === 'books'
+                    ? 'libri'
+                    : section.id === 'magazines'
+                      ? 'riviste'
+                      : section.id === 'videos'
+                        ? 'categorie'
+                        : 'sezioni'}
+                </span>
+                <span className="browse-card-hint">{section.hint}</span>
+              </button>
             ))}
-          </ul>
-        </div>
+          </div>
+        </>
       )}
-      {pending.length > 0 && (
-        <div className="pending-audio">
-          <h3>Senza audio JW.org</h3>
-          <p className="section-lede">
-            Nessun MP3 pubblicato su JW.org: apri il testo e ascoltalo con la voce narrativa.
-          </p>
-          <ul className="library-list">
-            {pending.map((item) => {
-              const saved = loadBookmark(item.id)
-              return (
-                <li className="listening-result pending" key={item.id}>
-                  <div className="queue-item">
-                    <span className="q-title">{item.title}</span>
-                    <span className="q-meta">
-                      <span className="audio-badge no-audio">Senza audio JW.org</span>
-                      {' · '}
-                      {item.reason}
-                      {item.matchIn ? ` · ${item.matchIn}` : ''}
-                      {saved ? ` · riprendi: «${saved.snippet}»` : ''}
-                    </span>
-                  </div>
-                  <div className="result-actions">
-                    <button
-                      className="btn primary small"
-                      onClick={() => openReader(item)}
-                    >
-                      {saved ? 'Riprendi lettura' : 'Apri testo e ascolta'}
-                    </button>
-                    <a href={item.source} target="_blank" rel="noreferrer">
-                      Apri su JW.org ↗
-                    </a>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
+
+      {atSection && activeSection && (
+        <>
+          <p className="section-lede">{activeSection.hint}</p>
+          <div className="browse-grid" role="list">
+            {activeSection.items.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="browse-card"
+                role="listitem"
+                onClick={() => openItem(item)}
+              >
+                <span className="browse-card-kicker">
+                  {item.kind === 'book'
+                    ? 'Libro'
+                    : item.kind === 'magazine'
+                      ? 'Rivista'
+                      : item.kind === 'videos'
+                        ? 'Video'
+                        : 'Categoria'}
+                </span>
+                <span className="browse-card-title">{item.name}</span>
+              </button>
+            ))}
+          </div>
+          <button type="button" className="btn ghost small" onClick={goHome}>
+            ← Torna alle sezioni
+          </button>
+        </>
       )}
-      {next !== null && <button className="btn ghost" disabled={loading || Boolean(error)} onClick={() => {
-        setLoading(true)
-        setOffset(next)
-      }}>{submitted && !topic
-        ? kind === 'videos'
-          ? 'Cerca altri nei sottotitoli'
-          : 'Continua la ricerca'
-        : 'Carica altri'}</button>}
-      {kind === 'videos' && (
-        <p className="section-lede">
-          Stream a bassa risoluzione da JW.org. Con «Sottotitoli · brano» vedi il
-          testo, evidenzi la ricerca e scegli da dove far partire e finire
-          l’audio.
-        </p>
+
+      {atTopic && (
+        <>
+          {!submitted && topicName && (
+            <p className="section-lede">
+              {topicKind === 'book'
+                ? 'Scegli un capitolo: ascolta l’audio JW.org oppure apri il testo e indica da quale frase a quale frase.'
+                : topicKind === 'videos'
+                  ? 'Scegli un video. Con «Frase per frase» usi i sottotitoli per l’inizio e la fine.'
+                  : 'Scegli un articolo. Se c’è l’MP3 JW.org ascoltalo subito; altrimenti apri il testo frase per frase.'}
+            </p>
+          )}
+
+          {!loading && (submitted || topic) && (tracks.length > 0 || pending.length > 0) && (
+            <p className="section-lede audio-summary" role="status">
+              <span className="audio-badge has-audio">{visible.length} con audio JW.org</span>
+              {kind === 'articles' && (
+                <span className="audio-badge no-audio">{pending.length} senza audio JW.org</span>
+              )}
+              {next !== null ? ' · puoi continuare' : ' · elenco completo'}
+            </p>
+          )}
+
+          {tracks.length > 0 && (
+            <>
+              {officialOptions.length > 0 && (
+                <label>
+                  Sottosezione
+                  <select value={official} onChange={(event) => setOfficial(event.target.value)}>
+                    <option value="">Tutte</option>
+                    {officialOptions.map((name) => (
+                      <option key={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {themeOptions.length > 1 && (
+                <label>
+                  Tema suggerito
+                  <select value={theme} onChange={(event) => setTheme(event.target.value)}>
+                    <option value="">Tutti</option>
+                    {themeOptions.map((name) => (
+                      <option key={name}>{name}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </>
+          )}
+
+          {(topic || submitted) &&
+            next === null &&
+            !loading &&
+            !visible.length &&
+            !pending.length &&
+            !error && <p>Nessun contenuto trovato in questo gruppo.</p>}
+
+          {visible.length > 0 && (
+            <div className="available-audio">
+              <div className="browse-list-head">
+                <h3>Con audio JW.org</h3>
+                <button className="btn primary small" onClick={() => onPlay(visible)}>
+                  Ascolta tutti
+                </button>
+              </div>
+              <ul className="library-list browse-chapter-list">
+                {visible.map((track, index) => {
+                  const readable = canOpenText(track)
+                  return (
+                    <li className="listening-result has-jw-audio browse-chapter" key={track.id}>
+                      <button className="queue-item" onClick={() => onPlay(visible, index)}>
+                        <span className="q-title">{track.title}</span>
+                        <span className="q-meta">
+                          <span className="audio-badge has-audio">Audio JW.org</span>
+                          {' · '}
+                          {contentLabel(kind, topicKind || undefined)}
+                          {track.matchIn ? ` · ${track.matchIn}` : ''}
+                          {' · '}
+                          {formatDuration(track.duration)}
+                        </span>
+                      </button>
+                      <div className="result-actions">
+                        <button className="btn primary small" onClick={() => onPlay(visible, index)}>
+                          Ascolta
+                        </button>
+                        {kind === 'articles' && readable && (
+                          <button
+                            className="btn ghost small"
+                            onClick={() =>
+                              openReader({
+                                id: track.id,
+                                title: track.title,
+                                source: track.source,
+                              })
+                            }
+                          >
+                            Frase per frase
+                          </button>
+                        )}
+                        {kind === 'videos' && track.subtitleUrl && (
+                          <button
+                            className="btn ghost small"
+                            onClick={() =>
+                              setVideoReader({ ...track, subtitleUrl: track.subtitleUrl! })
+                            }
+                          >
+                            Frase per frase
+                          </button>
+                        )}
+                        <button className="btn ghost small" onClick={() => onAppend(track)}>
+                          In coda
+                        </button>
+                        <button
+                          className="btn ghost small"
+                          aria-pressed={later.some((item) => item.id === track.id)}
+                          onClick={() => onLater(track)}
+                        >
+                          {later.some((item) => item.id === track.id)
+                            ? 'Salvato · rimuovi'
+                            : 'Ascolta dopo'}
+                        </button>
+                        {collections.length > 0 && (
+                          <select
+                            value=""
+                            aria-label={`Salva ${track.title} in raccolta`}
+                            onChange={(event) => onSave(event.target.value, track)}
+                          >
+                            <option value="">Salva in raccolta</option>
+                            {collections.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {item.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <a
+                          href={track.source}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label={`Apri ${track.title} su JW.org`}
+                        >
+                          JW.org ↗
+                        </a>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
+
+          {pending.length > 0 && (
+            <div className="pending-audio">
+              <h3>Senza audio JW.org</h3>
+              <p className="section-lede">
+                Nessun MP3 su JW.org: apri il testo e scegli da quale frase ascoltare.
+              </p>
+              <ul className="library-list">
+                {pending.map((item) => {
+                  const saved = loadBookmark(item.id)
+                  return (
+                    <li className="listening-result pending" key={item.id}>
+                      <div className="queue-item">
+                        <span className="q-title">{item.title}</span>
+                        <span className="q-meta">
+                          <span className="audio-badge no-audio">Senza audio JW.org</span>
+                          {' · '}
+                          {item.reason}
+                          {item.matchIn ? ` · ${item.matchIn}` : ''}
+                          {saved ? ` · riprendi: «${saved.snippet}»` : ''}
+                        </span>
+                      </div>
+                      <div className="result-actions">
+                        <button className="btn primary small" onClick={() => openReader(item)}>
+                          {saved ? 'Riprendi frase per frase' : 'Frase per frase'}
+                        </button>
+                        <a href={item.source} target="_blank" rel="noreferrer">
+                          Apri su JW.org ↗
+                        </a>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
+
+          {next !== null && (
+            <button
+              className="btn ghost"
+              disabled={loading || Boolean(error)}
+              onClick={() => {
+                setLoading(true)
+                setOffset(next)
+              }}
+            >
+              {submitted && !topic
+                ? kind === 'videos'
+                  ? 'Cerca altri nei sottotitoli'
+                  : 'Continua la ricerca'
+                : 'Carica altri'}
+            </button>
+          )}
+
+          {(sectionId || topic) && (
+            <button
+              type="button"
+              className="btn ghost small"
+              onClick={() => {
+                if (topic && activeSection) openSection(activeSection.id)
+                else goHome()
+              }}
+            >
+              ← Indietro
+            </button>
+          )}
+        </>
       )}
     </section>
   )

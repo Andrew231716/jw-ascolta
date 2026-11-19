@@ -28,39 +28,77 @@ function strip(html: string) {
 }
 
 function allowedPath(path: string) {
-  return /^\/it\/(?:biblioteca-digitale\/(?:articoli|riviste)|cosa-dice-la-Bibbia)\/[\p{L}\d%/._-]+\/?$/u.test(
+  return /^\/it\/(?:biblioteca-digitale\/(?:articoli|riviste|libri)|cosa-dice-la-Bibbia)\/[\p{L}\d%/._-]+\/?$/u.test(
     path,
   )
 }
 
+async function resolveDocid(docid: string): Promise<string | null> {
+  if (!/^\d{6,12}$/.test(docid)) return null
+  const response = await fetch(
+    `${site}/finder?wtlocale=I&docid=${docid}&prefer=lang`,
+    {
+      signal: AbortSignal.timeout(12000),
+      headers: { 'Accept-Language': 'it' },
+      redirect: 'follow',
+    },
+  )
+  if (!response.ok) return null
+  try {
+    const finalPath = new URL(response.url).pathname
+    if (!allowedPath(finalPath.endsWith('/') ? finalPath : finalPath + '/')) return null
+    return finalPath.endsWith('/') ? finalPath : finalPath + '/'
+  } catch {
+    return null
+  }
+}
+
 /**
  * Extracts readable Italian article text from JW.org for on-device TTS.
- * Query: path=/it/.../ or url=https://www.jw.org/it/...
+ * Query: path=/it/.../ or url=https://www.jw.org/it/... or docid=1102…
  */
 export default async function handler(request: Request): Promise<Response> {
   const { searchParams } = new URL(request.url)
   let path = (searchParams.get('path') || '').trim()
   const urlParam = (searchParams.get('url') || '').trim()
-
-  if (!path && urlParam) {
-    try {
-      const parsed = new URL(urlParam)
-      if (parsed.hostname !== 'www.jw.org' && parsed.hostname !== 'jw.org') {
-        return Response.json({ error: 'host_not_allowed' }, { status: 400 })
-      }
-      path = parsed.pathname
-    } catch {
-      return Response.json({ error: 'invalid_url' }, { status: 400 })
-    }
-  }
-
-  if (!path.startsWith('/')) path = '/' + path
-  if (!path.endsWith('/')) path += '/'
-  if (!allowedPath(path)) {
-    return Response.json({ error: 'path_not_allowed' }, { status: 400 })
-  }
+  const docid = (searchParams.get('docid') || '').trim()
 
   try {
+    if (!path && docid) {
+      const resolved = await resolveDocid(docid)
+      if (!resolved) {
+        return Response.json({ error: 'docid_not_found' }, { status: 404 })
+      }
+      path = resolved
+    }
+
+    if (!path && urlParam) {
+      try {
+        const parsed = new URL(urlParam)
+        if (parsed.hostname !== 'www.jw.org' && parsed.hostname !== 'jw.org') {
+          return Response.json({ error: 'host_not_allowed' }, { status: 400 })
+        }
+        const fromQuery = parsed.searchParams.get('docid')
+        if (fromQuery && parsed.pathname.includes('finder')) {
+          const resolved = await resolveDocid(fromQuery)
+          if (!resolved) {
+            return Response.json({ error: 'docid_not_found' }, { status: 404 })
+          }
+          path = resolved
+        } else {
+          path = parsed.pathname
+        }
+      } catch {
+        return Response.json({ error: 'invalid_url' }, { status: 400 })
+      }
+    }
+
+    if (!path.startsWith('/')) path = '/' + path
+    if (!path.endsWith('/')) path += '/'
+    if (!allowedPath(path)) {
+      return Response.json({ error: 'path_not_allowed' }, { status: 400 })
+    }
+
     const response = await fetch(site + path, {
       signal: AbortSignal.timeout(12000),
       headers: { 'Accept-Language': 'it' },

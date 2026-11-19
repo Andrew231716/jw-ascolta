@@ -15,6 +15,10 @@ type LibraryTrack = {
   source: string
   matchIn?: string
   subtitleUrl?: string
+  /** JW MEPS document id — enables chapter text / phrase reading when set. */
+  docid?: string
+  /** True when the track has a page we can open for frase-a-frase. */
+  canRead?: boolean
 }
 
 type PendingItem = {
@@ -631,6 +635,8 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
           source: site + meta.path,
           topics: name ? [name] : [],
           matchIn: meta.matchIn,
+          docid: id,
+          canRead: true,
         } satisfies LibraryTrack,
       }
     }),
@@ -665,6 +671,35 @@ function recentIssues(count: number) {
   return out
 }
 
+/** Known JW.org web roots for Italian books (when TOC scraping helps). */
+const BOOK_WEB_ROOTS: Record<string, string> = {
+  wcg: '/it/biblioteca-digitale/libri/cammina-coraggiosamente-con-dio/',
+  ia: '/it/biblioteca-digitale/libri/vera-fede/',
+  lff: '/it/biblioteca-digitale/libri/puoi-vivere-felice-per-sempre/',
+  bh: '/it/biblioteca-digitale/libri/cosa-insegna-la-bibbia/',
+  cl: '/it/biblioteca-digitale/libri/avviciniamoci/',
+}
+
+function chapterSource(pub: string, docid?: number | string) {
+  const id = String(docid || '')
+  if (/^\d{6,12}$/.test(id)) {
+    return {
+      source: `${site}/finder?wtlocale=I&docid=${id}&prefer=lang`,
+      docid: id,
+      canRead: true,
+    }
+  }
+  const root = BOOK_WEB_ROOTS[pub]
+  return {
+    source: root
+      ? site + root
+      : pub === 'mrt'
+        ? site + articles + 'altri-argomenti/'
+        : site + '/it/biblioteca-digitale/libri/',
+    canRead: false,
+  }
+}
+
 async function catalogPubTracks(
   pub: string,
   query: string,
@@ -696,23 +731,90 @@ async function catalogPubTracks(
       (!query || matches(String(item.title || ''), query)),
   )
   const slice = files.slice(offset, offset + pageSize)
-  const source =
-    pub === 'mrt'
-      ? site + articles + 'altri-argomenti/'
-      : site + '/it/biblioteca-digitale/libri/'
   return {
-    tracks: slice.map((item, index) => ({
-      id: `pub-${pub}-` + (item.docid || item.track || 'x') + '-' + (item.track || index),
-      title: String(item.title || topicName),
-      url: String(item.file!.url),
-      duration: Number(item.duration ?? 0),
-      topics: [topicName],
-      source,
-      matchIn: query ? 'Nel titolo' : undefined,
-    })),
+    tracks: slice.map((item, index) => {
+      const link = chapterSource(pub, item.docid)
+      return {
+        id: `pub-${pub}-` + (item.docid || item.track || 'x') + '-' + (item.track || index),
+        title: String(item.title || topicName),
+        url: String(item.file!.url),
+        duration: Number(item.duration ?? 0),
+        topics: [topicName],
+        source: link.source,
+        docid: link.docid,
+        canRead: link.canRead,
+        matchIn: query ? 'Nel titolo' : undefined,
+      }
+    }),
     pending: [],
     next: offset + slice.length < files.length ? offset + slice.length : null,
     failed: 0,
+  }
+}
+
+type BrowseItem = { id: string; name: string; kind: 'book' | 'magazine' | 'articles' | 'videos' }
+type BrowseSection = { id: string; name: string; hint: string; items: BrowseItem[] }
+
+async function browseSections(kind: 'articles' | 'videos'): Promise<{ sections: BrowseSection[] }> {
+  if (kind === 'videos') {
+    const root = await category('VideoOnDemand')
+    return {
+      sections: [
+        {
+          id: 'videos',
+          name: 'Categorie video',
+          hint: 'Scegli una categoria, poi un video. Con i sottotitoli puoi ascoltare da frase a frase.',
+          items:
+            root.subcategories?.map(({ key, name }) => ({
+              id: key,
+              name,
+              kind: 'videos' as const,
+            })) ?? [],
+        },
+      ],
+    }
+  }
+
+  const topics = await articleTopics()
+  const books: BrowseItem[] = BOOK_AUDIO_PUBS.map(([id, name]) => ({
+    id: `pub:${id}`,
+    name,
+    kind: 'book',
+  }))
+  const magazines: BrowseItem[] = [
+    { id: 'pub:w', name: 'Torre di Guardia — studio', kind: 'magazine' },
+    { id: 'pub:g', name: 'Svegliatevi!', kind: 'magazine' },
+    { id: 'pub:wp', name: 'Torre di Guardia — pubblica', kind: 'magazine' },
+  ]
+  const htmlTopics: BrowseItem[] = topics
+    .filter((item) => !item.id.startsWith('pub:'))
+    .map((item) => ({ id: item.id, name: item.name, kind: 'articles' as const }))
+  const mrt = topics.find((item) => item.id === 'pub:mrt')
+  if (mrt) {
+    htmlTopics.unshift({ id: mrt.id, name: 'Altri argomenti (audio)', kind: 'articles' })
+  }
+
+  return {
+    sections: [
+      {
+        id: 'books',
+        name: 'Libri',
+        hint: 'Apri un libro, scegli il capitolo e ascolta tutto o da frase a frase.',
+        items: books,
+      },
+      {
+        id: 'magazines',
+        name: 'Riviste',
+        hint: 'Articoli audio delle riviste recenti pubblicati su JW.org.',
+        items: magazines,
+      },
+      {
+        id: 'articles',
+        name: 'Articoli e argomenti',
+        hint: 'Sezioni come su JW.org: apri una categoria, poi l’articolo.',
+        items: htmlTopics,
+      },
+    ],
   }
 }
 
@@ -809,6 +911,7 @@ export default async function handler(request: Request) {
   const topic = searchParams.get('topic')
   const query = (searchParams.get('q') ?? '').trim().slice(0, 120)
   const offset = Number(searchParams.get('offset') ?? 0)
+  const browse = searchParams.get('browse') === '1'
   if (!Number.isSafeInteger(offset) || offset < 0) {
     return new Response(null, { status: 400 })
   }
@@ -816,6 +919,9 @@ export default async function handler(request: Request) {
     'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=86400',
   }
   try {
+    if (browse && (kind === 'articles' || kind === 'videos') && !topic && !query) {
+      return Response.json(await browseSections(kind), { headers })
+    }
     if (kind === 'videos' && query && !topic) {
       // Search every VOD category for titles in one pass, then page through subtitles.
       const catalog = await allVideoTracks()

@@ -30,6 +30,20 @@ type ArticlePayload = {
   source: string
 }
 
+/** Build article-text query from a JW.org page URL or finder?docid= link. */
+function articleTextQuery(source: string) {
+  try {
+    const url = new URL(source)
+    const docid = url.searchParams.get('docid')
+    if (docid && /^\d{6,12}$/.test(docid)) {
+      return new URLSearchParams({ docid })
+    }
+    return new URLSearchParams({ path: url.pathname })
+  } catch {
+    return new URLSearchParams({ path: source })
+  }
+}
+
 export function ArticleNarration({
   articleId,
   title,
@@ -100,7 +114,7 @@ export function ArticleNarration({
     setError('')
     const content = transcript !== undefined
       ? Promise.resolve({ text: transcript, title, source })
-      : fetch('/api/article-text?' + new URLSearchParams({ path: new URL(source).pathname }), { signal: controller.signal })
+      : fetch('/api/article-text?' + articleTextQuery(source), { signal: controller.signal })
           .then(async res => {
             if (!res.ok) throw new Error('Impossibile leggere il testo dell’articolo.')
             return res.json() as Promise<ArticlePayload>
