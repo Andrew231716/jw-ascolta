@@ -431,7 +431,7 @@ export function ListeningLibrary({
       <div className="mode-toggle" role="group" aria-label="Tipo di contenuto">
         {(
           [
-            ['articles', 'Libri e articoli'],
+            ['articles', 'Catalogo testi'],
             ['videos', 'Audio dei video'],
           ] as const
         ).map(([id, name]) => (
@@ -540,6 +540,7 @@ export function ListeningLibrary({
                 type="button"
                 className="browse-card browse-section-card"
                 role="listitem"
+                aria-label={`Apri sezione ${section.name}`}
                 onClick={() => openSection(section.id)}
               >
                 <span className="browse-card-title">{section.name}</span>
@@ -570,6 +571,15 @@ export function ListeningLibrary({
                 type="button"
                 className="browse-card"
                 role="listitem"
+                aria-label={
+                  item.kind === 'book'
+                    ? `Apri libro ${item.name}`
+                    : item.kind === 'magazine'
+                      ? `Apri rivista ${item.name}`
+                      : item.kind === 'videos'
+                        ? `Apri categoria video ${item.name}`
+                        : `Apri categoria ${item.name}`
+                }
                 onClick={() => openItem(item)}
               >
                 <span className="browse-card-kicker">
