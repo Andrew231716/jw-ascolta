@@ -74,6 +74,7 @@ export function primeNarrationAudio(): void {
     if (play && typeof play.then === 'function') {
       void play
         .then(() => {
+          if (el.src !== SILENT_WAV) return
           el.pause()
           el.muted = false
           el.removeAttribute('src')
@@ -118,19 +119,21 @@ async function fetchNeuralChunk(
   text: string,
   voice: NarrationVoiceId,
   rate: NarrationRate,
+  signal: AbortSignal,
 ): Promise<Blob> {
   const res = await fetch('/api/tts', {
-    method: 'POST',
+    method: 'POST', signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, voice, rate }),
   })
   if (!res.ok) {
+    const body = await res.text()
     let detail = ''
     try {
-      const j = (await res.json()) as { error?: string }
+      const j = JSON.parse(body) as { error?: string }
       detail = j.error || ''
     } catch {
-      detail = await res.text()
+      detail = body.slice(0, 160)
     }
     throw new Error(detail || `TTS HTTP ${res.status}`)
   }
@@ -169,7 +172,7 @@ export async function speakSentences(
 
   const controller = new AbortController()
   const render = voice === 'personal' ? personalRenderer(controller.signal)
-    : (text: string) => fetchNeuralChunk(text, voice, rate)
+    : (text: string) => fetchNeuralChunk(text, voice, rate, controller.signal)
   const queue = texts.flatMap((text, i) => {
     let offset = i === 0 ? firstWordOffset : 0
     return chunkForTts(text, voice === 'personal' ? 300 : 1800).map(piece => {
@@ -241,8 +244,7 @@ export async function speakSentences(
       pausedGate = null
     }
     detach()
-    playIndex = 0
-    currentWord = 0
+    if (activeNarrationPause === handle.pause) activeNarrationPause = null
   }
 
   const waitIfPaused = async () => {
@@ -267,16 +269,15 @@ export async function speakSentences(
       const done = (result: 'ok' | 'error') => {
         if (settled) return
         settled = true
-        window.clearInterval(abortWatch)
+        controller.signal.removeEventListener('abort', cancel)
         audioEl.onended = null
         audioEl.onerror = null
         audioEl.ontimeupdate = null
         resolve(result)
       }
 
-      const abortWatch = window.setInterval(() => {
-        if (aborted) done('ok')
-      }, 120)
+      const cancel = () => done('ok')
+      controller.signal.addEventListener('abort', cancel, { once: true })
 
       audioEl.ontimeupdate = () => {
         if (!audioEl.duration || !Number.isFinite(audioEl.duration)) return
@@ -293,10 +294,12 @@ export async function speakSentences(
 
       void audioEl.play().then(
         () => {
+          if (aborted || pausedGate) return
           onStatus?.('speaking', voiceLabel(voice))
           emitProgress()
         },
         () => {
+          if (aborted) return
           onStatus?.('paused', 'Tocca di nuovo per ascoltare')
           emitProgress()
         },
@@ -333,6 +336,8 @@ export async function speakSentences(
         const result = await playBlob(blob, wordsInClip, wordBase)
         if (aborted) return
         if (result === 'error') {
+          controller.abort()
+          cleanup()
           onStatus?.('error', 'Errore audio su questa frase. Riprova o salta avanti.')
           return
         }
@@ -355,7 +360,6 @@ export async function speakSentences(
     }
   }
 
-  void run()
 
   const handle: SpeakHandle = {
     stop(opts) {
@@ -386,6 +390,7 @@ export async function speakSentences(
       }
       void audioEl.play().then(
         () => {
+          if (aborted || pausedGate) return
           onStatus?.('speaking', voiceLabel(voice))
           emitProgress()
         },
@@ -394,7 +399,8 @@ export async function speakSentences(
     },
     getProgress: () => progressNow(),
   }
-  activeNarrationPause = () => handle.pause()
+  activeNarrationPause = handle.pause
+  void run()
   return handle
 }
 

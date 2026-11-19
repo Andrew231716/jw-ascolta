@@ -73,22 +73,28 @@ export default async function handler(request: Request): Promise<Response> {
     const title = titleMatch ? strip(titleMatch[1]) : ''
 
     let body = ''
-    const bodyMatch = html.match(
-      /<div class="bodyTxt">([\s\S]*?)<\/div>\s*<\/div>\s*<\/div>/i,
-    )
-    if (bodyMatch) body = strip(bodyMatch[1])
+    const opening = /<div\b[^>]*\bclass=["'][^"']*\bbodyTxt\b[^"']*["'][^>]*>/i.exec(html)
+    if (opening) {
+      const start = opening.index + opening[0].length
+      const tags = /<\/?div\b[^>]*>/gi
+      tags.lastIndex = start
+      let depth = 1
+      let tag
+      while ((tag = tags.exec(html))) {
+        depth += tag[0][1] === '/' ? -1 : 1
+        if (depth === 0) {
+          body = strip(html.slice(start, tag.index))
+          break
+        }
+      }
+    }
     if (!body) {
       const paragraphs = Array.from(
         html.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi),
         (m) => strip(m[1]),
-      ).filter((p) => p.length > 40)
+      ).filter(Boolean)
       body = paragraphs.join('\n\n')
     }
-
-    // Soft cap for TTS payloads
-    const max = 28000
-    const truncated = body.length > max
-    if (truncated) body = body.slice(0, max)
 
     if (!title && !body) {
       return Response.json({ error: 'empty' }, { status: 404 })
@@ -99,7 +105,7 @@ export default async function handler(request: Request): Promise<Response> {
         title,
         text: body,
         source: site + path,
-        truncated,
+        truncated: false,
         chars: body.length,
       },
       {
