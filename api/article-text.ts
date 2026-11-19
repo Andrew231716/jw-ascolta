@@ -1,4 +1,4 @@
-import { articleDocid, sameArticleTitle } from './lib/article-metadata.ts'
+import { articleDocid, sameArticleTitle } from './lib/article-metadata.js'
 
 export const config = { runtime: 'edge' }
 

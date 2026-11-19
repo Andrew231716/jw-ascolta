@@ -5,7 +5,7 @@ import {
   loadTracks,
   resolveSectionSlugs,
   toHls,
-} from './lib/tracks'
+} from './lib/tracks.js'
 
 /**
  * Endpoint CarPlay: HLS audio-only.

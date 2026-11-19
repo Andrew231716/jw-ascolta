@@ -1,4 +1,4 @@
-import { articleDocid, sameArticleTitle } from './lib/article-metadata.ts'
+import { articleDocid, sameArticleTitle } from './lib/article-metadata.js'
 
 export const config = { runtime: 'edge', maxDuration: 60 }
 
@@ -992,7 +992,7 @@ export default async function handler(request: Request) {
     if (link) {
       const parsed = new URL(link)
       if (parsed.protocol !== 'https:' || parsed.username || parsed.password || !['www.jw.org', 'jw.org'].includes(parsed.hostname)) return Response.json({ error: 'Usa un collegamento HTTPS di JW.org.' }, { status: 400 })
-      const naturalKey = parsed.searchParams.get('lank') || (parsed.hash.includes('/mediaitems/') ? parsed.hash.split('/').filter(Boolean).at(-1) : '') || ''
+      const naturalKey = parsed.searchParams.get('lank') || (parsed.hash.includes('/mediaitems/') ? parsed.hash.split('/').filter(Boolean).pop() : '') || ''
       if (naturalKey && /^[\w-]+$/.test(naturalKey)) {
         const tracks = await allVideoTracks()
         const track = tracks.find(item => new URL(item.source).searchParams.get('lank') === naturalKey)

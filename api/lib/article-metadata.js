@@ -1,5 +1,5 @@
 /** Page navigation also contains document ids. Use only the main article's class. */
-export function articleDocid(html: string) {
+export function articleDocid(html) {
   return (
     html.match(/<(?:article|main)\b[^>]*\bclass=["'][^"']*\bdocId-(\d{6,12})\b/i)?.[1] ||
     html.match(
@@ -8,8 +8,8 @@ export function articleDocid(html: string) {
     null
   )
 }
-export function sameArticleTitle(left: string, right: string) {
-  const clean = (value: string) =>
+export function sameArticleTitle(left, right) {
+  const clean = (value) =>
     value
       .replace(/&(?:rsquo|lsquo|rdquo|ldquo|quot|apos|ndash|mdash|hellip|nbsp);/gi, ' ')
       .replace(/&#(\d+);/g, (_, value) => String.fromCodePoint(Number(value)))

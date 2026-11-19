@@ -5,7 +5,7 @@ import { localResponse, listeningProgress, recordProgress, restoreBackup } from 
 import articleHandler from '../api/article-text.ts'
 import listeningHandler from '../api/listening.ts'
 import downloadHandler from '../api/download.ts'
-import { articleDocid, sameArticleTitle } from '../api/lib/article-metadata.ts'
+import { articleDocid, sameArticleTitle } from '../api/lib/article-metadata.js'
 import { generationResult } from '../src/personalVoice.ts'
 
 const values = new Map()

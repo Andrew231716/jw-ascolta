@@ -1,6 +1,6 @@
 export const config = { runtime: 'edge' }
 
-import { findBestTrack, loadTracks } from './lib/tracks'
+import { findBestTrack, loadTracks } from './lib/tracks.js'
 
 export default async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url)
