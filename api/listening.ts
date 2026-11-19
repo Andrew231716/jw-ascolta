@@ -597,7 +597,8 @@ async function fetchArticleAudio(docid: string) {
 }
 
 async function articleTracks(path: string, offset: number, query = '', name = '') {
-  const html = await (await read(site + path)).text()
+  const pageHtml = await (await read(site + path)).text()
+  const html = pageHtml.match(/<main\b[\s\S]*?<\/main>/i)?.[0] || pageHtml
   const documentIds = new Map<
     string,
     { path: string; title: string; matchIn?: string }
@@ -609,7 +610,7 @@ async function articleTracks(path: string, offset: number, query = '', name = ''
   for (const match of html.matchAll(
     /<a\b[^>]*href="(\/it\/[^"#?]+\/)"[^>]*data-page-id="mid(\d+)"[^>]*>/g,
   )) {
-    if (match[1] === path) continue
+    if (match[1] === path || !/^\/it\/(?:biblioteca-digitale\/(?:articoli|riviste|libri)\/|cosa-dice-la-Bibbia\/)[^/]+\/[^/]+\//.test(match[1])) continue
     if (!documentIds.has(match[2])) {
       documentIds.set(match[2], {
         path: match[1],
@@ -1000,7 +1001,7 @@ export default async function handler(request: Request) {
       return Response.json({ article: parsed.href }, { headers })
     }
     if (searchParams.get('latest') === '1') {
-      const result = await articleTracks('/it/biblioteca-digitale/novita/', offset, '', 'Novità JW.org')
+      const result = await articleTracks('/it/cosa-nuovo/', offset, '', 'Novità JW.org')
       return Response.json(result, result.failed ? {} : { headers })
     }
     if (browse && (kind === 'articles' || kind === 'videos') && !topic && !query) {
