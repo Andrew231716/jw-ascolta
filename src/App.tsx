@@ -337,7 +337,7 @@ export default function App() {
       return
     }
     if (item.track) {
-      playTracks([item.track], 0, item.clipStart || item.track.clipStart || 0)
+      playTracks([item.track], 0, progressRecords[item.track.id]?.state === 'started' ? progressRecords[item.track.id].position : item.clipStart || item.track.clipStart || 0)
     }
   }
 
@@ -1045,7 +1045,7 @@ export default function App() {
         <section className="chooser" id="libreria" aria-label="Libreria personale">
           <h2>La tua libreria</h2>
           <LibraryTools onPlay={playTracks} onOpenArticle={item => { setResumeReader(item); setHomeTab('listening') }} />
-          <label>Stato degli ascolti
+          <label>Filtra gli ascolti recenti
             <select value={libraryFilter} onChange={event => setLibraryFilter(event.target.value)}>
               <option value="all">Tutti</option><option value="new">Da iniziare</option>
               <option value="started">In corso</option><option value="completed">Completati</option>
