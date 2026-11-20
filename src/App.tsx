@@ -5,9 +5,11 @@ import {
   buildPlaylist,
   fetchTrackInLanguage,
   fetchTracksForSlugs,
+  ensureMusicLanguages,
   filterMusicLanguages,
   formatDuration,
   getMusicLanguage,
+  getMusicLanguages,
   languagesForTrack,
   musicLanguageLabel,
   parsePlayMode,
@@ -163,6 +165,7 @@ export default function App() {
   const [musicLang, setMusicLang] = useState<MusicLangCode>(() => getMusicLanguage())
   const [langPickerQuery, setLangPickerQuery] = useState('')
   const [langPickerOpen, setLangPickerOpen] = useState(false)
+  const [musicLangCount, setMusicLangCount] = useState(() => getMusicLanguages().length)
   const [trackLangBusyId, setTrackLangBusyId] = useState<string | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -240,6 +243,16 @@ export default function App() {
     setVideoBookmarks(listVideoBookmarks())
     setRecent(listRecent())
   }, [homeTab])
+
+  useEffect(() => {
+    let cancelled = false
+    void ensureMusicLanguages().then((languages) => {
+      if (!cancelled) setMusicLangCount(languages.length)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!playlist[index]) return
@@ -715,17 +728,23 @@ export default function App() {
           {homeTab === 'music' && (
             <>
               <div className="music-lang-picker">
-                <span className="music-lang-label">Lingua audio predefinita</span>
+                <span className="music-lang-label">
+                  Lingua audio predefinita
+                  {musicLangCount > 40 ? ` · ${musicLangCount} lingue` : ''}
+                </span>
                 <input
                   type="search"
                   className="music-lang-search"
                   aria-label="Cerca lingua della musica"
-                  placeholder="Cerca lingua…"
+                  placeholder="Cerca lingua (es. Twi)…"
                   value={langPickerOpen ? langPickerQuery : musicLanguageLabel(musicLang)}
                   disabled={catalogLoading}
                   onFocus={() => {
                     setLangPickerOpen(true)
                     setLangPickerQuery('')
+                    void ensureMusicLanguages().then((languages) => {
+                      setMusicLangCount(languages.length)
+                    })
                   }}
                   onChange={(event) => {
                     setLangPickerOpen(true)
@@ -737,6 +756,11 @@ export default function App() {
                 />
                 {langPickerOpen && (
                   <ul className="music-lang-options" role="listbox" aria-label="Lingue disponibili">
+                    {!langPickerQuery.trim() && (
+                      <li className="music-lang-empty">
+                        Digita per cercare tra {musicLangCount} lingue JW.org
+                      </li>
+                    )}
                     {filterMusicLanguages(langPickerQuery).map((lang) => (
                       <li key={lang.code}>
                         <button
@@ -762,7 +786,8 @@ export default function App() {
                         </button>
                       </li>
                     ))}
-                    {filterMusicLanguages(langPickerQuery).length === 0 && (
+                    {langPickerQuery.trim() &&
+                      filterMusicLanguages(langPickerQuery).length === 0 && (
                       <li className="music-lang-empty">Nessuna lingua trovata</li>
                     )}
                   </ul>

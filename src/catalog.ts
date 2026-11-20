@@ -143,9 +143,31 @@ export const SECTIONS: SectionDef[] = [
 
 const API = 'https://b.jw-cdn.org/apis/mediator/v1'
 const MUSIC_LANG_KEY = 'jw-ascolta:music-lang'
+const MUSIC_LANG_CACHE_KEY = 'jw-ascolta:music-lang-catalog-v2'
+const PINNED_MUSIC_LANGS = [
+  'I',
+  'E',
+  'S',
+  'F',
+  'X',
+  'T',
+  'TPO',
+  'J',
+  'KO',
+  'A',
+  'SW',
+  'TW',
+] as const
 
-/** Lingue con catalogo musicale JW.org (codice mediator). */
-export const MUSIC_LANGUAGES = [
+export type MusicLangInfo = {
+  code: string
+  name: string
+  vernacular?: string
+  aliases?: string[]
+}
+
+/** Seed + offline fallback until the full JW.org list loads. */
+export const MUSIC_LANGUAGES: MusicLangInfo[] = [
   { code: 'I', name: 'Italiano', vernacular: 'Italiano' },
   { code: 'E', name: 'Inglese', vernacular: 'English' },
   { code: 'S', name: 'Spagnolo', vernacular: 'Español' },
@@ -179,18 +201,124 @@ export const MUSIC_LANGUAGES = [
   { code: 'TK', name: 'Turco', vernacular: 'Türkçe' },
   { code: 'SW', name: 'Swahili', vernacular: 'Kiswahili' },
   { code: 'HI', name: 'Hindi', vernacular: 'हिंदी' },
-] as const
+  { code: 'TW', name: 'Twi', vernacular: 'Twi' },
+]
 
-export type MusicLangCode = (typeof MUSIC_LANGUAGES)[number]['code']
+export type MusicLangCode = string
 
-function isMusicLangCode(value: string): value is MusicLangCode {
-  return MUSIC_LANGUAGES.some((item) => item.code === value)
+let musicLanguages: MusicLangInfo[] = [...MUSIC_LANGUAGES]
+let musicLanguagesLoaded = false
+let musicLanguagesPromise: Promise<MusicLangInfo[]> | null = null
+
+function readCachedMusicLanguages(): MusicLangInfo[] | null {
+  try {
+    const raw = localStorage.getItem(MUSIC_LANG_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { at?: number; languages?: MusicLangInfo[] }
+    if (!Array.isArray(parsed.languages) || parsed.languages.length < 100) return null
+    if (parsed.at && Date.now() - parsed.at > 7 * 24 * 60 * 60 * 1000) return null
+    return parsed.languages
+      .filter(
+        (item) =>
+          item &&
+          typeof item.code === 'string' &&
+          typeof item.name === 'string' &&
+          isMusicLangCode(item.code),
+      )
+      .map((item) => ({
+        code: item.code.toUpperCase(),
+        name: item.name,
+        vernacular: item.vernacular || undefined,
+        aliases: Array.isArray(item.aliases) ? item.aliases : undefined,
+      }))
+  } catch {
+    return null
+  }
+}
+
+function persistMusicLanguages(languages: MusicLangInfo[]) {
+  try {
+    localStorage.setItem(
+      MUSIC_LANG_CACHE_KEY,
+      JSON.stringify({ at: Date.now(), languages }),
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+function prioritizeMusicLanguages(list: MusicLangInfo[]): MusicLangInfo[] {
+  const byCode = new Map(list.map((lang) => [lang.code, lang]))
+  const head: MusicLangInfo[] = []
+  for (const code of PINNED_MUSIC_LANGS) {
+    const item = byCode.get(code)
+    if (item) {
+      head.push(item)
+      byCode.delete(code)
+    }
+  }
+  const rest = [...byCode.values()].sort((a, b) =>
+    a.name.localeCompare(b.name, 'it', { sensitivity: 'base' }),
+  )
+  return [...head, ...rest]
+}
+
+export function isMusicLangCode(value: string): value is MusicLangCode {
+  return /^[A-Z][A-Z0-9]{0,11}$/.test(String(value || '').trim().toUpperCase())
+}
+
+export function getMusicLanguages(): MusicLangInfo[] {
+  if (!musicLanguagesLoaded) {
+    const cached = readCachedMusicLanguages()
+    if (cached?.length) {
+      musicLanguages = prioritizeMusicLanguages(cached)
+      musicLanguagesLoaded = true
+    }
+  }
+  return musicLanguages
+}
+
+export async function ensureMusicLanguages(): Promise<MusicLangInfo[]> {
+  getMusicLanguages()
+  if (musicLanguagesLoaded && musicLanguages.length > 200) {
+    return musicLanguages
+  }
+  if (musicLanguagesPromise) return musicLanguagesPromise
+
+  musicLanguagesPromise = (async () => {
+    const res = await fetch(`${API}/languages/I/all`, {
+      signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) throw new Error(`languages_${res.status}`)
+    const data = (await res.json()) as {
+      languages?: Array<{
+        code?: string
+        name?: string
+        vernacular?: string
+        isSignLanguage?: boolean
+      }>
+    }
+    const parsed = (data.languages || [])
+      .filter((item) => item?.code && item?.name && isMusicLangCode(item.code))
+      .map((item) => ({
+        code: String(item.code).toUpperCase(),
+        name: String(item.name),
+        vernacular: item.vernacular || undefined,
+      }))
+    if (parsed.length < 100) return musicLanguages
+    musicLanguages = prioritizeMusicLanguages(parsed)
+    musicLanguagesLoaded = true
+    persistMusicLanguages(musicLanguages)
+    return musicLanguages
+  })().catch(() => musicLanguages)
+
+  return musicLanguagesPromise
 }
 
 export function getMusicLanguage(): MusicLangCode {
   try {
     const saved = localStorage.getItem(MUSIC_LANG_KEY) || ''
-    if (isMusicLangCode(saved)) return saved
+    if (isMusicLangCode(saved)) return saved.toUpperCase()
   } catch {
     /* ignore */
   }
@@ -198,7 +326,7 @@ export function getMusicLanguage(): MusicLangCode {
 }
 
 export function setMusicLanguage(code: string): MusicLangCode {
-  const next = isMusicLangCode(code) ? code : 'I'
+  const next = isMusicLangCode(code) ? code.toUpperCase() : 'I'
   try {
     localStorage.setItem(MUSIC_LANG_KEY, next)
   } catch {
@@ -209,18 +337,46 @@ export function setMusicLanguage(code: string): MusicLangCode {
 }
 
 export function musicLanguageLabel(code: string) {
-  return MUSIC_LANGUAGES.find((item) => item.code === code)?.name || code
+  const normalized = String(code || '').toUpperCase()
+  return (
+    getMusicLanguages().find((item) => item.code === normalized)?.name ||
+    normalized ||
+    code
+  )
 }
 
-export function filterMusicLanguages(query: string) {
+export function filterMusicLanguages(query: string, limit = 80): MusicLangInfo[] {
+  const all = getMusicLanguages()
   const q = normalizeAlias(query)
-  if (!q) return [...MUSIC_LANGUAGES]
-  return MUSIC_LANGUAGES.filter((lang) => {
-    const hay = normalizeAlias(
-      `${lang.code} ${lang.name} ${lang.vernacular || ''}`,
-    )
-    return hay.includes(q) || lang.code.toLowerCase().includes(q)
-  })
+  if (!q) {
+    return all.slice(0, Math.min(limit, 40))
+  }
+  const scored: Array<{ lang: MusicLangInfo; score: number }> = []
+  for (const lang of all) {
+    const code = lang.code.toLowerCase()
+    const name = normalizeAlias(lang.name)
+    const vernacular = normalizeAlias(lang.vernacular || '')
+    const aliases = (lang.aliases || []).map((alias) => normalizeAlias(alias))
+    let score = 0
+    if (code === q || name === q || vernacular === q) score = 100
+    else if (code.startsWith(q) || name.startsWith(q) || vernacular.startsWith(q))
+      score = 80
+    else if (
+      name.includes(q) ||
+      vernacular.includes(q) ||
+      code.includes(q) ||
+      aliases.some((alias) => alias.includes(q))
+    ) {
+      score = 50
+    }
+    if (score > 0) scored.push({ lang, score })
+  }
+  scored.sort(
+    (a, b) =>
+      b.score - a.score ||
+      a.lang.name.localeCompare(b.lang.name, 'it', { sensitivity: 'base' }),
+  )
+  return scored.slice(0, limit).map((item) => item.lang)
 }
 
 export function trackPrimaryTitle(track: Track) {
@@ -253,12 +409,19 @@ export function languagesForTrack(track: Track): MusicLangCode[] {
       .map((code) => String(code).toUpperCase())
       .filter(isMusicLangCode),
   )
-  if (track.lang && isMusicLangCode(track.lang)) available.add(track.lang)
+  if (track.lang && isMusicLangCode(track.lang)) {
+    available.add(track.lang.toUpperCase())
+  }
   available.add('I')
-  const ordered = MUSIC_LANGUAGES.map((lang) => lang.code).filter((code) =>
-    available.has(code),
-  )
-  return ordered.length ? ordered : (['I'] as MusicLangCode[])
+  const knownOrder = getMusicLanguages()
+    .map((lang) => lang.code)
+    .filter((code) => available.has(code))
+  const knownSet = new Set(knownOrder)
+  const unknown = [...available]
+    .filter((code) => !knownSet.has(code))
+    .sort((a, b) => a.localeCompare(b))
+  const ordered = [...knownOrder, ...unknown]
+  return ordered.length ? ordered : ['I']
 }
 
 interface MediatorFile {

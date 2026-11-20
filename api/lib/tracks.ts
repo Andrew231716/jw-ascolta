@@ -89,15 +89,9 @@ export const SECTION_DEFS: Array<{
 const DEFAULT_LANG = 'I'
 const API = 'https://b.jw-cdn.org/apis/mediator/v1'
 
-const MUSIC_LANG_CODES = new Set([
-  'I', 'E', 'S', 'T', 'TPO', 'F', 'X', 'O', 'P', 'M', 'G', 'U', 'K', 'B', 'H',
-  'Z', 'D', 'N', 'FI', 'AL', 'C', 'J', 'KO', 'CHS', 'CH', 'IN', 'TG', 'VT', 'SI',
-  'A', 'TK', 'SW', 'HI',
-])
-
 export function resolveMusicLang(raw: string | null | undefined): string {
   const code = String(raw || '').trim().toUpperCase()
-  return MUSIC_LANG_CODES.has(code) ? code : DEFAULT_LANG
+  return /^[A-Z][A-Z0-9]{0,11}$/.test(code) ? code : DEFAULT_LANG
 }
 
 export type TrackHit = {
