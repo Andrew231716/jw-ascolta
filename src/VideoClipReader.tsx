@@ -1,6 +1,7 @@
 import { ArticleNarration } from './ArticleNarration'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Track } from './catalog'
+import { ShareAudioButtons } from './ShareAudioButtons'
 import {
   clearVideoBookmark,
   loadVideoBookmark,
@@ -328,6 +329,16 @@ export function VideoClipReader({
                 Rimuovi salvataggio
               </button>
             )}
+          </div>
+          <div className="result-actions">
+            <ShareAudioButtons
+              track={{
+                ...track,
+                contentKind: 'video',
+                clipStart: startCue?.start,
+                clipEnd: endCue?.end,
+              }}
+            />
           </div>
           {savedNote && <p className="narration-status">{savedNote}</p>}
 

@@ -1918,6 +1918,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .listening-filters select { width: 100%; color: #edf5f2; background: #0c2429; }
 .download-control { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .download-control [role=status] { font-size: .9rem; color: var(--muted); }
+
+.share-audio {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.share-audio.compact {
+  margin-top: 0.15rem;
+}
+
+.share-audio-note {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
 .offline-banner { padding: .75rem 1rem; border: 1px solid #d8ac5b; border-radius: 12px; background: #27352a; color: #ffdf9f; }
 .narration-dock {
   position: fixed;

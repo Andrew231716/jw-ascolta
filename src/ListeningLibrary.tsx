@@ -1,4 +1,5 @@
 import { DownloadButton } from './DownloadButton'
+import { ShareAudioButtons } from './ShareAudioButtons'
 import { localResponse, listeningProgress, PROGRESS_CHANGED } from './offlineLibrary.ts'
 import { LISTENING_THEMES, titleThemes, timedPlaylist } from './listeningThemes.ts'
 import { useEffect, useRef, useState } from 'react'
@@ -795,6 +796,7 @@ export function ListeningLibrary({
                             Leggi e scegli un brano
                           </button>
                         )}
+                        <ShareAudioButtons track={track} compact />
                         <DownloadButton track={track} />
                         <details className="more-actions">
                           <summary>Altro</summary>

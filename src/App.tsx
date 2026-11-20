@@ -10,6 +10,7 @@ import {
   formatDuration,
   getMusicLanguage,
   getMusicLanguages,
+  isMusicLangCode,
   languagesForTrack,
   musicLanguageLabel,
   parsePlayMode,
@@ -25,6 +26,7 @@ import {
   type PlayMode,
   type SectionSlug,
 } from './catalog'
+import { ShareAudioButtons } from './ShareAudioButtons'
 import { listBookmarks } from './articleText'
 import { useAudioPlayer } from './useAudioPlayer'
 import { ListeningLibrary } from './ListeningLibrary'
@@ -123,8 +125,40 @@ function readQuery() {
   const articleUrl = params.get('articleUrl') || ''
   const articleId = params.get('article') || ''
   const articleTitle = params.get('articleTitle') || ''
+  const musicLangParam = params.get('lang') || params.get('l') || ''
+  const musicLang = isMusicLangCode(musicLangParam)
+    ? musicLangParam.toUpperCase()
+    : null
+  const videoAudio = params.get('videoAudio') || ''
+  const videoTitle = params.get('videoTitle') || ''
+  const videoSource = params.get('videoSource') || ''
+  const subtitleUrl = params.get('subtitleUrl') || ''
+  const videoSection = params.get('videoSection') || 'tutto'
+  const videoSectionName = params.get('videoSectionName') || 'Video'
+  const clipStartRaw = params.get('vs')
+  const clipEndRaw = params.get('ve')
   const openLibrary =
-    params.get('view') === 'library' || Boolean(articleUrl && articleId)
+    params.get('view') === 'library' ||
+    params.get('listening') === 'videos' ||
+    params.get('listening') === 'articles' ||
+    Boolean(articleUrl && articleId) ||
+    Boolean(videoAudio && videoTitle)
+  const sharedVideo: Track | null =
+    videoAudio && videoTitle
+      ? {
+          id: `video-share-${videoTitle.slice(0, 40)}`,
+          title: videoTitle,
+          url: videoAudio,
+          duration: 0,
+          sectionSlug: (videoSection as SectionSlug) || 'tutto',
+          sectionName: videoSectionName,
+          source: videoSource || undefined,
+          subtitleUrl: subtitleUrl || undefined,
+          contentKind: 'video',
+          clipStart: clipStartRaw != null ? Number(clipStartRaw) : undefined,
+          clipEnd: clipEndRaw != null ? Number(clipEndRaw) : undefined,
+        }
+      : null
   return {
     sections: resolveSectionInput(sectionsRaw || 'tutto'),
     mode: resolvedMode,
@@ -133,6 +167,12 @@ function readQuery() {
     title: title.trim(),
     siriFocus,
     openLibrary,
+    musicLang,
+    sharedVideo,
+    initialKind:
+      params.get('listening') === 'videos' || sharedVideo
+        ? ('videos' as const)
+        : ('articles' as const),
     initialReader:
       articleUrl && articleId
         ? { id: articleId, title: articleTitle || 'Articolo', source: articleUrl }
@@ -144,6 +184,7 @@ function buildShareUrl(
   sections: SectionSlug[],
   mode: PlayMode,
   title?: string,
+  lang?: string,
 ) {
   const url = new URL(window.location.href)
   url.search = ''
@@ -152,6 +193,7 @@ function buildShareUrl(
   url.searchParams.set('mode', mode)
   url.searchParams.set('play', '1')
   if (title?.trim()) url.searchParams.set('title', title.trim())
+  if (lang) url.searchParams.set('lang', lang)
   return url.toString()
 }
 
@@ -162,7 +204,10 @@ export default function App() {
     initial.sections.includes('tutto') ? ['tutto'] : initial.sections,
   )
   const [mode, setMode] = useState<PlayMode>(initial.mode)
-  const [musicLang, setMusicLang] = useState<MusicLangCode>(() => getMusicLanguage())
+  const [musicLang, setMusicLang] = useState<MusicLangCode>(() => {
+    if (initial.musicLang) return setMusicLanguage(initial.musicLang)
+    return getMusicLanguage()
+  })
   const [langPickerQuery, setLangPickerQuery] = useState('')
   const [langPickerOpen, setLangPickerOpen] = useState(false)
   const [musicLangCount, setMusicLangCount] = useState(() => getMusicLanguages().length)
@@ -181,7 +226,10 @@ export default function App() {
   const [titleQuery, setTitleQuery] = useState(initial.title)
   const [unifiedQuery, setUnifiedQuery] = useState('')
   const [listeningSearch, setListeningSearch] = useState('')
-  const [listeningKind, setListeningKind] = useState<'articles' | 'videos'>('articles')
+  const [listeningKind, setListeningKind] = useState<'articles' | 'videos'>(
+    initial.initialKind || 'articles',
+  )
+  const sharedVideoStarted = useRef(false)
   const [dragFrom, setDragFrom] = useState<number | null>(null)
   const siriFocus = initial.siriFocus
   const player = useAudioPlayer()
@@ -541,6 +589,9 @@ export default function App() {
       if (autoplay) url.searchParams.set('play', '1')
       else url.searchParams.delete('play')
       if (siriFocus) url.searchParams.set('siri', '1')
+      const lang = getMusicLanguage()
+      if (lang && lang !== 'I') url.searchParams.set('lang', lang)
+      else url.searchParams.delete('lang')
       window.history.replaceState({}, '', url)
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Errore di rete')
@@ -550,7 +601,22 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!initial.autoplay || autoplayStarted.current) return
+    if (sharedVideoStarted.current || !initial.sharedVideo) return
+    sharedVideoStarted.current = true
+    autoplayStarted.current = true
+    setHomeTab('listening')
+    setListeningKind('videos')
+    playTracks(
+      [initial.sharedVideo],
+      0,
+      initial.sharedVideo.clipStart || 0,
+    )
+    setStatus(`Video condiviso · ${initial.sharedVideo.title}`)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.sharedVideo])
+
+  useEffect(() => {
+    if (!initial.autoplay || autoplayStarted.current || initial.sharedVideo) return
     autoplayStarted.current = true
     void startPlayback(
       initial.sections,
@@ -559,7 +625,7 @@ export default function App() {
       initial.title || undefined,
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initial.autoplay, initial.mode, initial.sections, initial.title])
+  }, [initial.autoplay, initial.mode, initial.sections, initial.title, initial.sharedVideo])
 
   function toggleSection(slug: SectionSlug) {
     if (slug === 'tutto') {
@@ -588,7 +654,7 @@ export default function App() {
     player.clipEnd != null || player.clipStart != null
       ? clipSpan
       : player.duration
-  const shareUrl = buildShareUrl(effectiveSlugs, mode, titleQuery)
+  const shareUrl = buildShareUrl(effectiveSlugs, mode, titleQuery, musicLang)
   const visibleCount = queueExpanded ? player.playlist.length : 40
 
   function openSiriGuide() {
@@ -908,7 +974,10 @@ export default function App() {
                   {favorites.some((track) => track.id === player.current?.id) ? '★ Nei preferiti' : '☆ Aggiungi ai preferiti'}
                 </button>
               </div>
-              <DownloadButton track={player.current} />
+              <div className="result-actions">
+                <ShareAudioButtons track={player.current} />
+                <DownloadButton track={player.current} />
+              </div>
               {player.error && <p className="error" role="alert">{player.error} <button className="btn ghost small" onClick={player.retry}>Riprova</button></p>}
               {player.needsGesture && (
                 <p className="gesture-inline">
@@ -1425,6 +1494,7 @@ function TrackList({ tracks, onPlay, onRemove, onChangeLanguage, busyTrackId }: 
               </select>
             </label>
           )}
+          <ShareAudioButtons track={track} compact />
           {onRemove && <button className="btn ghost small" aria-label={`Rimuovi ${trackPrimaryTitle(track)} dai preferiti`}
             onClick={() => onRemove(track)}>Rimuovi</button>}
         </li>

@@ -2,6 +2,8 @@ import { createPortal } from 'react-dom'
 import { hasPersonalVoiceToken, setPersonalVoiceToken, forgetVoiceSample, hasVoiceSample, saveVoiceSample } from './personalVoice'
 import { localResponse, offlineAudio, recordProgress, rememberArticle } from './offlineLibrary.ts'
 import { DownloadButton } from './DownloadButton'
+import { ShareAudioButtons } from './ShareAudioButtons'
+import { shareOrDownloadMp3 } from './shareAudio'
 import { clearGeneratedAudio } from './generatedAudio.ts'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -502,21 +504,66 @@ export function ArticleNarration({
     }
   }
 
-  function downloadAudio() {
+  async function downloadAudio() {
     const chunks = audioChunksRef.current
     if (!chunks.length) {
       setShareNote('Ascolta almeno una frase, poi scarica.')
       return
     }
     const personal = chunks[0].type.includes('wav')
-    const blob = personal ? chunks[chunks.length - 1] : new Blob(chunks, { type: 'audio/mpeg' })
+    const mime = personal ? 'audio/wav' : 'audio/mpeg'
+    const blob = personal
+      ? chunks[chunks.length - 1]
+      : new Blob(chunks, { type: mime })
+    const filename = `${(article?.title || title || 'articolo').slice(0, 60)}.${personal ? 'wav' : 'mp3'}`
+    const file = new File([blob], filename, { type: mime })
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+          title: article?.title || title,
+          text: article?.title || title,
+        })
+        setShareNote('Audio condiviso')
+        return
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') return
+      }
+    }
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${(article?.title || title || 'articolo').slice(0, 60)}.${personal ? 'wav' : 'mp3'}`
+    a.download = filename
     a.click()
     URL.revokeObjectURL(url)
     setShareNote('Download avviato')
+  }
+
+  async function shareOriginalMp3() {
+    if (!audioUrl) {
+      setShareNote('Nessun MP3 originale disponibile.')
+      return
+    }
+    setShareNote('Preparazione MP3…')
+    try {
+      const result = await shareOrDownloadMp3({
+        id: articleId,
+        title: article?.title || title,
+        url: audioUrl,
+        duration: audioDuration || 0,
+        sectionSlug: 'tutto',
+        sectionName: 'Articolo',
+        source,
+        contentKind: 'article',
+      })
+      setShareNote(result === 'shared' ? 'MP3 condiviso' : 'Download MP3 avviato')
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setShareNote('')
+        return
+      }
+      setShareNote(error instanceof Error ? error.message : 'Download MP3 non riuscito')
+    }
   }
 
   const pausedHere = status === 'paused' && progress
@@ -851,18 +898,26 @@ export function ArticleNarration({
                   className="btn ghost small"
                   onClick={() => void shareRange()}
                 >
-                  Condividi brano
+                  Condividi link brano
                 </button>
               )}
               {voice !== 'jw' && (
-                <button type="button" className="btn ghost small" onClick={downloadAudio}>
-                  {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica audio'}
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  onClick={() => void downloadAudio()}
+                >
+                  {voice === 'personal' ? 'Scarica ultima frase pronta' : 'Scarica / condividi MP3'}
                 </button>
               )}
-              {voice === 'jw' && audioUrl && (
-                <a className="btn ghost small" href={audioUrl} target="_blank" rel="noreferrer">
-                  Apri MP3 JW.org ↗
-                </a>
+              {audioUrl && (
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  onClick={() => void shareOriginalMp3()}
+                >
+                  Scarica / condividi MP3 originale
+                </button>
               )}
             </div>
           </details>
@@ -889,7 +944,34 @@ export function ArticleNarration({
             </p>
           )}
 
-          {audioUrl && <DownloadButton track={{ id: articleId, title: article?.title || title, url: audioUrl, duration: audioDuration, sectionSlug: 'tutto', sectionName: 'Articolo' }} />}
+          {audioUrl && (
+            <div className="result-actions">
+              <ShareAudioButtons
+                track={{
+                  id: articleId,
+                  title: article?.title || title,
+                  url: audioUrl,
+                  duration: audioDuration || 0,
+                  sectionSlug: 'tutto',
+                  sectionName: 'Articolo',
+                  source,
+                  contentKind: 'article',
+                }}
+              />
+              <DownloadButton
+                track={{
+                  id: articleId,
+                  title: article?.title || title,
+                  url: audioUrl,
+                  duration: audioDuration || 0,
+                  sectionSlug: 'tutto',
+                  sectionName: 'Articolo',
+                  source,
+                  contentKind: 'article',
+                }}
+              />
+            </div>
+          )}
           {(status === 'speaking' || status === 'paused') && createPortal(<aside className="narration-dock" aria-label="Lettore compatto articolo">
             <strong>{article?.title || title}</strong>
             <button className="icon-btn" aria-label="Indietro di 15 secondi" onClick={() => skipNarrationAudio(-15)}>−15</button>
