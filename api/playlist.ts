@@ -41,10 +41,15 @@ export default async function handler(req: Request): Promise<Response> {
     200,
     Math.max(1, Number(url.searchParams.get('limit') || 80) || 80),
   )
+  const lang =
+    url.searchParams.get('lang') ||
+    url.searchParams.get('l') ||
+    url.searchParams.get('lingua') ||
+    'I'
 
   try {
     const slugs = resolveSectionSlugs(sectionsRaw)
-    const tracks = await loadTracks(slugs)
+    const tracks = await loadTracks(slugs, lang)
     const ordered = buildOrderedTracks(tracks, mode, title)
     if (!ordered || ordered.length === 0) {
       return new Response(title.trim() ? 'brano non trovato' : 'catalogo vuoto', {
