@@ -2,15 +2,20 @@ import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   SECTIONS,
-  MUSIC_LANGUAGES,
   buildPlaylist,
+  fetchTrackInLanguage,
   fetchTracksForSlugs,
+  filterMusicLanguages,
   formatDuration,
   getMusicLanguage,
+  languagesForTrack,
   musicLanguageLabel,
   parsePlayMode,
   normalizeTitle,
   setMusicLanguage,
+  trackMatchesQuery,
+  trackPrimaryTitle,
+  trackSecondaryTitle,
   type MusicLangCode,
   type Track,
   playlistStartingAtTitle,
@@ -156,6 +161,9 @@ export default function App() {
   )
   const [mode, setMode] = useState<PlayMode>(initial.mode)
   const [musicLang, setMusicLang] = useState<MusicLangCode>(() => getMusicLanguage())
+  const [langPickerQuery, setLangPickerQuery] = useState('')
+  const [langPickerOpen, setLangPickerOpen] = useState(false)
+  const [trackLangBusyId, setTrackLangBusyId] = useState<string | null>(null)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [later, setLater] = useState(() => readSaved<Track[]>('later', []))
@@ -387,7 +395,7 @@ export default function App() {
     setStatus(null)
     try {
       const { tracks, unavailable } = await fetchTracksForSlugs(['tutto'])
-      const hits = tracks.filter((track) => normalizeTitle(track.title).includes(q))
+      const hits = tracks.filter((track) => trackMatchesQuery(track, unifiedQuery))
       setUnifiedMusicHits(hits)
       const parts = [`${hits.length} brani musicali`]
       if (unavailable.length) parts.push(`categorie non disponibili: ${unavailable.join(', ')}`)
@@ -396,6 +404,41 @@ export default function App() {
       setStatus(error instanceof Error ? error.message : 'Catalogo non disponibile')
     } finally {
       setCatalogLoading(false)
+    }
+  }
+
+  async function changeTrackLanguage(
+    track: Track,
+    langCode: string,
+    options?: { playlistIndex?: number; searchIndex?: number },
+  ) {
+    if (!track.naturalKey || track.lang === langCode) return
+    setTrackLangBusyId(track.id)
+    setStatus(`Carico audio in ${musicLanguageLabel(langCode)}…`)
+    try {
+      const next = await fetchTrackInLanguage(track, langCode)
+      if (!next) {
+        setStatus(`Audio non disponibile in ${musicLanguageLabel(langCode)}`)
+        return
+      }
+      if (options?.playlistIndex != null) {
+        player.replaceTrackAt(options.playlistIndex, next, true)
+      }
+      if (options?.searchIndex != null) {
+        setUnifiedMusicHits((prev) => {
+          if (!prev) return prev
+          const copy = [...prev]
+          copy[options.searchIndex!] = next
+          return copy
+        })
+      }
+      setStatus(
+        `Audio: ${musicLanguageLabel(langCode)} · ${trackPrimaryTitle(next)}`,
+      )
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Cambio lingua non riuscito')
+    } finally {
+      setTrackLangBusyId(null)
     }
   }
 
@@ -571,7 +614,7 @@ export default function App() {
         >
           <span className="gesture-play">▶</span>
           <span className="gesture-title">Tocca per ascoltare</span>
-          <span className="gesture-sub">{player.current.title}</span>
+          <span className="gesture-sub">{trackPrimaryTitle(player.current)}</span>
           <span className="gesture-hint">
             Il browser richiede un tocco per avviare l’audio.
           </span>
@@ -671,32 +714,60 @@ export default function App() {
           </nav>, document.body)}
           {homeTab === 'music' && (
             <>
-              <label className="music-lang-picker">
-                Lingua audio
-                <select
-                  aria-label="Lingua della musica"
-                  value={musicLang}
+              <div className="music-lang-picker">
+                <span className="music-lang-label">Lingua audio predefinita</span>
+                <input
+                  type="search"
+                  className="music-lang-search"
+                  aria-label="Cerca lingua della musica"
+                  placeholder="Cerca lingua…"
+                  value={langPickerOpen ? langPickerQuery : musicLanguageLabel(musicLang)}
                   disabled={catalogLoading}
-                  onChange={(event) => {
-                    const next = setMusicLanguage(event.target.value)
-                    setMusicLang(next)
-                    setUnifiedMusicHits(null)
-                    setStatus(`Lingua musica: ${musicLanguageLabel(next)}`)
-                    if (player.current) {
-                      closePlayback()
-                    }
+                  onFocus={() => {
+                    setLangPickerOpen(true)
+                    setLangPickerQuery('')
                   }}
-                >
-                  {MUSIC_LANGUAGES.map((lang) => (
-                    <option key={lang.code} value={lang.code}>
-                      {lang.name}
-                      {lang.vernacular && lang.vernacular !== lang.name
-                        ? ` · ${lang.vernacular}`
-                        : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  onChange={(event) => {
+                    setLangPickerOpen(true)
+                    setLangPickerQuery(event.target.value)
+                  }}
+                  onBlur={() => {
+                    window.setTimeout(() => setLangPickerOpen(false), 150)
+                  }}
+                />
+                {langPickerOpen && (
+                  <ul className="music-lang-options" role="listbox" aria-label="Lingue disponibili">
+                    {filterMusicLanguages(langPickerQuery).map((lang) => (
+                      <li key={lang.code}>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={lang.code === musicLang}
+                          className={lang.code === musicLang ? 'is-active' : undefined}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => {
+                            const next = setMusicLanguage(lang.code)
+                            setMusicLang(next)
+                            setLangPickerQuery('')
+                            setLangPickerOpen(false)
+                            setUnifiedMusicHits(null)
+                            setStatus(`Lingua musica: ${musicLanguageLabel(next)}`)
+                            if (player.current) closePlayback()
+                          }}
+                        >
+                          <span>{lang.name}</span>
+                          {lang.vernacular && lang.vernacular !== lang.name ? (
+                            <span className="music-lang-vernacular">{lang.vernacular}</span>
+                          ) : null}
+                        </button>
+                      </li>
+                    ))}
+                    {filterMusicLanguages(langPickerQuery).length === 0 && (
+                      <li className="music-lang-empty">Nessuna lingua trovata</li>
+                    )}
+                  </ul>
+                )}
+              </div>
               <div className="cta-row">
                 <button className="btn primary" disabled={catalogLoading}
                   onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
@@ -739,7 +810,31 @@ export default function App() {
             </div>
             <div className="now-meta">
               <p className="now-section">{player.current.sectionName}</p>
-              <h2 className="now-title">{player.current.title}</h2>
+              <h2 className="now-title">{trackPrimaryTitle(player.current)}</h2>
+              {trackSecondaryTitle(player.current) && (
+                <p className="now-title-secondary">{trackSecondaryTitle(player.current)}</p>
+              )}
+              {player.current.naturalKey && (
+                <label className="track-lang-picker">
+                  Lingua di questo brano
+                  <select
+                    aria-label="Lingua audio del brano in riproduzione"
+                    value={player.current.lang || musicLang}
+                    disabled={trackLangBusyId === player.current.id || catalogLoading}
+                    onChange={(event) => {
+                      void changeTrackLanguage(player.current!, event.target.value, {
+                        playlistIndex: player.index,
+                      })
+                    }}
+                  >
+                    {languagesForTrack(player.current).map((code) => (
+                      <option key={code} value={code}>
+                        {musicLanguageLabel(code)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <p className="now-sub">
                 {status ||
                   `${player.index + 1} / ${player.playlist.length} · ${
@@ -920,7 +1015,14 @@ export default function App() {
                 : 'Nessun brano in musica con questa parola.'}
             </p>
             {unifiedMusicHits.length > 0 && (
-              <TrackList tracks={unifiedMusicHits.slice(0, 40)} onPlay={(i) => playTracks(unifiedMusicHits, i)} />
+              <TrackList
+                tracks={unifiedMusicHits.slice(0, 40)}
+                onPlay={(i) => playTracks(unifiedMusicHits, i)}
+                busyTrackId={trackLangBusyId}
+                onChangeLanguage={(track, lang, index) => {
+                  void changeTrackLanguage(track, lang, { searchIndex: index })
+                }}
+              />
             )}
             <div className="result-actions">
               <button type="button" className="btn ghost small" onClick={() => {
@@ -1039,7 +1141,10 @@ export default function App() {
                   className="queue-item"
                   onClick={() => player.jumpTo(i)}
                 >
-                  <span className="q-title">{t.title}</span>
+                  <span className="q-title">{trackPrimaryTitle(t)}</span>
+                  {trackSecondaryTitle(t) && (
+                    <span className="q-title-secondary">{trackSecondaryTitle(t)}</span>
+                  )}
                   <span className="q-meta">
                     {t.sectionName}
                     {t.duration ? ` · ${formatDuration(t.duration)}` : ''}
@@ -1218,7 +1323,10 @@ export default function App() {
       {showMini && player.current && !readingOpen && (
         <aside className="mini-player" aria-label="Lettore compatto">
           <button className="queue-item" onClick={() => nowRef.current?.scrollIntoView({ block: 'center' })}>
-            {player.current.title}
+            <span className="q-title">{trackPrimaryTitle(player.current)}</span>
+            {trackSecondaryTitle(player.current) && (
+              <span className="q-title-secondary">{trackSecondaryTitle(player.current)}</span>
+            )}
           </button>
           <button className="icon-btn" aria-label={player.playing ? 'Pausa' : 'Riproduci'}
             onClick={() => void player.toggle()}>{player.playing ? '❚❚' : '▶'}</button>
@@ -1253,20 +1361,46 @@ export default function App() {
   )
 }
 
-function TrackList({ tracks, onPlay, onRemove }: {
+function TrackList({ tracks, onPlay, onRemove, onChangeLanguage, busyTrackId }: {
   tracks: Track[]
   onPlay: (index: number) => void
   onRemove?: (track: Track) => void
+  onChangeLanguage?: (track: Track, lang: string, index: number) => void
+  busyTrackId?: string | null
 }) {
   return (
     <ul className="library-list">
       {tracks.map((track, index) => (
-        <li key={track.id}>
+        <li key={track.id} className="library-track-row">
           <button className="queue-item" onClick={() => onPlay(index)}>
-            <span className="q-title">{track.title}</span>
+            <span className="q-title">{trackPrimaryTitle(track)}</span>
+            {trackSecondaryTitle(track) && (
+              <span className="q-title-secondary">{trackSecondaryTitle(track)}</span>
+            )}
             <span className="q-meta">{track.sectionName}</span>
           </button>
-          {onRemove && <button className="btn ghost small" aria-label={`Rimuovi ${track.title} dai preferiti`}
+          {onChangeLanguage && track.naturalKey && (
+            <label className="track-lang-picker compact">
+              <span className="sr-only">Lingua audio di {trackPrimaryTitle(track)}</span>
+              <select
+                aria-label={`Lingua audio di ${trackPrimaryTitle(track)}`}
+                value={track.lang || getMusicLanguage()}
+                disabled={busyTrackId === track.id}
+                onClick={(event) => event.stopPropagation()}
+                onChange={(event) => {
+                  event.stopPropagation()
+                  onChangeLanguage(track, event.target.value, index)
+                }}
+              >
+                {languagesForTrack(track).map((code) => (
+                  <option key={code} value={code}>
+                    {musicLanguageLabel(code)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {onRemove && <button className="btn ghost small" aria-label={`Rimuovi ${trackPrimaryTitle(track)} dai preferiti`}
             onClick={() => onRemove(track)}>Rimuovi</button>}
         </li>
       ))}

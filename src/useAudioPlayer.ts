@@ -567,6 +567,14 @@ export function useAudioPlayer() {
       playlistRef.current = playlist
       setState((state) => ({ ...state, playlist }))
     },
+    replaceTrackAt: (index: number, track: Track, autoplay = true) => {
+      const list = [...playlistRef.current]
+      if (!list[index]) return
+      list[index] = track
+      playlistRef.current = list
+      setState((state) => ({ ...state, playlist: list }))
+      if (index === indexRef.current) void loadAndPlay(track, autoplay)
+    },
     resumeFromGesture,
     pause: () => audioRef.current?.pause(),
     async fadeOutAndPause(ms = 4000) {
@@ -642,8 +650,11 @@ function updateMediaSession(track: Track) {
         { src: track.image, sizes: '512x512', type: 'image/jpeg' },
       ]
     : []
+  const title = track.titleIt || track.title
+  const local =
+    track.titleLocal && track.titleLocal !== title ? track.titleLocal : ''
   navigator.mediaSession.metadata = new MediaMetadata({
-    title: track.title,
+    title: local ? `${title} · ${local}` : title,
     artist: 'JW Ascolta',
     album: track.sectionName,
     artwork,

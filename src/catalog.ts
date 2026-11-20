@@ -37,6 +37,16 @@ export interface Track {
   subtitleUrl?: string
   source?: string
   contentKind?: 'music' | 'article' | 'video'
+  /** Mediator language of the audio file (e.g. I, E, S). */
+  lang?: string
+  /** Cross-language identity from JW mediator. */
+  naturalKey?: string
+  /** Italian display title when available. */
+  titleIt?: string
+  /** Title in the audio language (selected / per-track). */
+  titleLocal?: string
+  /** Mediator language codes where this track exists. */
+  availableLanguages?: string[]
 }
 
 export const SECTIONS: SectionDef[] = [
@@ -202,6 +212,55 @@ export function musicLanguageLabel(code: string) {
   return MUSIC_LANGUAGES.find((item) => item.code === code)?.name || code
 }
 
+export function filterMusicLanguages(query: string) {
+  const q = normalizeAlias(query)
+  if (!q) return [...MUSIC_LANGUAGES]
+  return MUSIC_LANGUAGES.filter((lang) => {
+    const hay = normalizeAlias(
+      `${lang.code} ${lang.name} ${lang.vernacular || ''}`,
+    )
+    return hay.includes(q) || lang.code.toLowerCase().includes(q)
+  })
+}
+
+export function trackPrimaryTitle(track: Track) {
+  return track.titleIt || track.title
+}
+
+export function trackSecondaryTitle(track: Track): string | null {
+  const primary = trackPrimaryTitle(track)
+  const local = track.titleLocal || (track.lang && track.lang !== 'I' ? track.title : '')
+  if (!local) return null
+  if (normalizeTitle(local) === normalizeTitle(primary)) return null
+  return local
+}
+
+export function trackSearchText(track: Track) {
+  return [track.title, track.titleIt, track.titleLocal]
+    .filter(Boolean)
+    .join(' ')
+}
+
+export function trackMatchesQuery(track: Track, rawQuery: string) {
+  const q = normalizeTitle(rawQuery)
+  if (!q) return false
+  return normalizeTitle(trackSearchText(track)).includes(q)
+}
+
+export function languagesForTrack(track: Track): MusicLangCode[] {
+  const available = new Set(
+    (track.availableLanguages || [])
+      .map((code) => String(code).toUpperCase())
+      .filter(isMusicLangCode),
+  )
+  if (track.lang && isMusicLangCode(track.lang)) available.add(track.lang)
+  available.add('I')
+  const ordered = MUSIC_LANGUAGES.map((lang) => lang.code).filter((code) =>
+    available.has(code),
+  )
+  return ordered.length ? ordered : (['I'] as MusicLangCode[])
+}
+
 interface MediatorFile {
   progressiveDownloadURL: string
   duration?: number
@@ -213,6 +272,9 @@ interface MediatorMedia {
   title: string
   duration?: number
   type?: string
+  languageAgnosticNaturalKey?: string
+  naturalKey?: string
+  availableLanguages?: string[]
   files?: MediatorFile[]
   images?: {
     sqr?: { lg?: string }
@@ -249,11 +311,40 @@ function cacheKey(lang: string, slug: string) {
   return `${lang}:${slug}`
 }
 
-export async function fetchSectionTracks(
+function mediaToTrack(
+  item: MediatorMedia,
   section: SectionDef,
-  langCode?: string,
+  lang: string,
+): Track | null {
+  if (item.type && item.type !== 'audio') return null
+  const file =
+    item.files?.find((f) => (f.mimetype || '').startsWith('audio/')) ||
+    item.files?.[0]
+  if (!file?.progressiveDownloadURL) return null
+  const naturalKey = item.languageAgnosticNaturalKey || undefined
+  const titleLocal = item.title
+  const titleIt = lang === 'I' ? item.title : undefined
+  return {
+    id: `${lang}:${item.guid}`,
+    title: titleIt || titleLocal,
+    titleIt,
+    titleLocal,
+    url: file.progressiveDownloadURL,
+    duration: item.duration || file.duration || 0,
+    image: pickImage(item),
+    sectionSlug: section.slug,
+    sectionName: section.shortName,
+    lang,
+    naturalKey,
+    availableLanguages: item.availableLanguages,
+    contentKind: 'music',
+  }
+}
+
+async function fetchSectionTracksRaw(
+  section: SectionDef,
+  lang: string,
 ): Promise<Track[]> {
-  const lang = langCode && isMusicLangCode(langCode) ? langCode : getMusicLanguage()
   const key = cacheKey(lang, section.slug)
   const cached = sectionCache.get(key)
   if (cached && Date.now() - cached.at < SECTION_CACHE_TTL_MS) {
@@ -268,26 +359,79 @@ export async function fetchSectionTracks(
   const data = (await res.json()) as MediatorCategoryResponse
   const media = data.category.media ?? []
   const tracks: Track[] = []
-
   for (const item of media) {
-    if (item.type && item.type !== 'audio') continue
-    const file = item.files?.find((f) =>
-      (f.mimetype || '').startsWith('audio/'),
-    ) || item.files?.[0]
-    if (!file?.progressiveDownloadURL) continue
-    tracks.push({
-      id: `${lang}:${item.guid}`,
-      title: item.title,
-      url: file.progressiveDownloadURL,
-      duration: item.duration || file.duration || 0,
-      image: pickImage(item),
-      sectionSlug: section.slug,
-      sectionName: section.shortName,
-    })
+    const track = mediaToTrack(item, section, lang)
+    if (track) tracks.push(track)
   }
-
   sectionCache.set(key, { at: Date.now(), tracks })
   return tracks.map((track) => ({ ...track }))
+}
+
+function mergeItalianTitles(localTracks: Track[], italianTracks: Track[]): Track[] {
+  const italianByKey = new Map<string, Track>()
+  for (const track of italianTracks) {
+    if (track.naturalKey) italianByKey.set(track.naturalKey, track)
+  }
+  return localTracks.map((track) => {
+    const italian = track.naturalKey
+      ? italianByKey.get(track.naturalKey)
+      : undefined
+    const titleIt = italian?.title || track.titleIt || track.title
+    const titleLocal = track.titleLocal || track.title
+    return {
+      ...track,
+      title: titleIt,
+      titleIt,
+      titleLocal,
+      availableLanguages:
+        track.availableLanguages || italian?.availableLanguages,
+    }
+  })
+}
+
+export async function fetchSectionTracks(
+  section: SectionDef,
+  langCode?: string,
+): Promise<Track[]> {
+  const lang = langCode && isMusicLangCode(langCode) ? langCode : getMusicLanguage()
+  if (lang === 'I') {
+    return fetchSectionTracksRaw(section, 'I').then((tracks) =>
+      tracks.map((track) => ({
+        ...track,
+        title: track.titleIt || track.title,
+        titleIt: track.titleIt || track.title,
+        titleLocal: track.titleLocal || track.title,
+      })),
+    )
+  }
+
+  const [localTracks, italianTracks] = await Promise.all([
+    fetchSectionTracksRaw(section, lang),
+    fetchSectionTracksRaw(section, 'I').catch(() => [] as Track[]),
+  ])
+  return mergeItalianTitles(localTracks, italianTracks)
+}
+
+export async function fetchTrackInLanguage(
+  track: Track,
+  langCode: string,
+): Promise<Track | null> {
+  if (!track.naturalKey) return null
+  const lang = isMusicLangCode(langCode) ? langCode : getMusicLanguage()
+  if (track.lang === lang && track.url) {
+    return {
+      ...track,
+      title: track.titleIt || track.title,
+    }
+  }
+  const section = SECTIONS.find((item) => item.slug === track.sectionSlug)
+  if (!section) return null
+  try {
+    const tracks = await fetchSectionTracks(section, lang)
+    return tracks.find((item) => item.naturalKey === track.naturalKey) || null
+  } catch {
+    return null
+  }
 }
 
 export async function fetchTracksForSlugs(
@@ -402,20 +546,27 @@ export function findTrackIndexByTitle(
   let bestScore = 0
 
   for (let i = 0; i < tracks.length; i += 1) {
-    const title = normalizeTitle(tracks[i].title)
-    if (!title) continue
+    const titles = [tracks[i].title, tracks[i].titleIt, tracks[i].titleLocal]
+      .filter(Boolean)
+      .map((value) => normalizeTitle(value as string))
+      .filter(Boolean)
+    if (!titles.length) continue
 
     let score = 0
-    if (title === query) score = 100
-    else if (title.startsWith(query) || query.startsWith(title)) score = 80
-    else if (title.includes(query) || query.includes(title)) score = 60
-    else {
-      const qTokens = query.split(' ').filter((t) => t.length > 2)
-      const tTokens = new Set(title.split(' ').filter((t) => t.length > 2))
-      if (qTokens.length) {
-        const hits = qTokens.filter((t) => tTokens.has(t)).length
-        score = (hits / qTokens.length) * 50
+    for (const title of titles) {
+      let next = 0
+      if (title === query) next = 100
+      else if (title.startsWith(query) || query.startsWith(title)) next = 80
+      else if (title.includes(query) || query.includes(title)) next = 60
+      else {
+        const qTokens = query.split(' ').filter((t) => t.length > 2)
+        const tTokens = new Set(title.split(' ').filter((t) => t.length > 2))
+        if (qTokens.length) {
+          const hits = qTokens.filter((t) => tTokens.has(t)).length
+          next = (hits / qTokens.length) * 50
+        }
       }
+      if (next > score) score = next
     }
 
     if (score > bestScore) {
