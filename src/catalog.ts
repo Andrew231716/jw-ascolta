@@ -131,8 +131,76 @@ export const SECTIONS: SectionDef[] = [
   },
 ]
 
-const LANG = 'I'
 const API = 'https://b.jw-cdn.org/apis/mediator/v1'
+const MUSIC_LANG_KEY = 'jw-ascolta:music-lang'
+
+/** Lingue con catalogo musicale JW.org (codice mediator). */
+export const MUSIC_LANGUAGES = [
+  { code: 'I', name: 'Italiano', vernacular: 'Italiano' },
+  { code: 'E', name: 'Inglese', vernacular: 'English' },
+  { code: 'S', name: 'Spagnolo', vernacular: 'Español' },
+  { code: 'T', name: 'Portoghese (Brasile)', vernacular: 'Português' },
+  { code: 'TPO', name: 'Portoghese (Portogallo)', vernacular: 'Português' },
+  { code: 'F', name: 'Francese', vernacular: 'Français' },
+  { code: 'X', name: 'Tedesco', vernacular: 'Deutsch' },
+  { code: 'O', name: 'Olandese', vernacular: 'Nederlands' },
+  { code: 'P', name: 'Polacco', vernacular: 'Polski' },
+  { code: 'M', name: 'Romeno', vernacular: 'Română' },
+  { code: 'G', name: 'Greco', vernacular: 'Ελληνική' },
+  { code: 'U', name: 'Russo', vernacular: 'русский' },
+  { code: 'K', name: 'Ucraino', vernacular: 'українська' },
+  { code: 'B', name: 'Ceco', vernacular: 'čeština' },
+  { code: 'H', name: 'Ungherese', vernacular: 'magyar' },
+  { code: 'Z', name: 'Svedese', vernacular: 'Svenska' },
+  { code: 'D', name: 'Danese', vernacular: 'Dansk' },
+  { code: 'N', name: 'Norvegese', vernacular: 'Norsk' },
+  { code: 'FI', name: 'Finlandese', vernacular: 'suomi' },
+  { code: 'AL', name: 'Albanese', vernacular: 'shqip' },
+  { code: 'C', name: 'Croato', vernacular: 'hrvatski' },
+  { code: 'J', name: 'Giapponese', vernacular: '日本語' },
+  { code: 'KO', name: 'Coreano', vernacular: '한국어' },
+  { code: 'CHS', name: 'Cinese (semplificato)', vernacular: '中文简体' },
+  { code: 'CH', name: 'Cinese (tradizionale)', vernacular: '中文繁體' },
+  { code: 'IN', name: 'Indonesiano', vernacular: 'Indonesia' },
+  { code: 'TG', name: 'Tagalog', vernacular: 'Tagalog' },
+  { code: 'VT', name: 'Vietnamita', vernacular: 'Việt' },
+  { code: 'SI', name: 'Thai', vernacular: 'ไทย' },
+  { code: 'A', name: 'Arabo', vernacular: 'العربية' },
+  { code: 'TK', name: 'Turco', vernacular: 'Türkçe' },
+  { code: 'SW', name: 'Swahili', vernacular: 'Kiswahili' },
+  { code: 'HI', name: 'Hindi', vernacular: 'हिंदी' },
+] as const
+
+export type MusicLangCode = (typeof MUSIC_LANGUAGES)[number]['code']
+
+function isMusicLangCode(value: string): value is MusicLangCode {
+  return MUSIC_LANGUAGES.some((item) => item.code === value)
+}
+
+export function getMusicLanguage(): MusicLangCode {
+  try {
+    const saved = localStorage.getItem(MUSIC_LANG_KEY) || ''
+    if (isMusicLangCode(saved)) return saved
+  } catch {
+    /* ignore */
+  }
+  return 'I'
+}
+
+export function setMusicLanguage(code: string): MusicLangCode {
+  const next = isMusicLangCode(code) ? code : 'I'
+  try {
+    localStorage.setItem(MUSIC_LANG_KEY, next)
+  } catch {
+    /* ignore */
+  }
+  clearMusicCatalogCache()
+  return next
+}
+
+export function musicLanguageLabel(code: string) {
+  return MUSIC_LANGUAGES.find((item) => item.code === code)?.name || code
+}
 
 interface MediatorFile {
   progressiveDownloadURL: string
@@ -173,15 +241,26 @@ function pickImage(media: MediatorMedia): string | undefined {
 const SECTION_CACHE_TTL_MS = 30 * 60 * 1000
 const sectionCache = new Map<string, { at: number; tracks: Track[] }>()
 
+export function clearMusicCatalogCache() {
+  sectionCache.clear()
+}
+
+function cacheKey(lang: string, slug: string) {
+  return `${lang}:${slug}`
+}
+
 export async function fetchSectionTracks(
   section: SectionDef,
+  langCode?: string,
 ): Promise<Track[]> {
-  const cached = sectionCache.get(section.slug)
+  const lang = langCode && isMusicLangCode(langCode) ? langCode : getMusicLanguage()
+  const key = cacheKey(lang, section.slug)
+  const cached = sectionCache.get(key)
   if (cached && Date.now() - cached.at < SECTION_CACHE_TTL_MS) {
     return cached.tracks.map((track) => ({ ...track }))
   }
 
-  const url = `${API}/categories/${LANG}/${section.apiKey}?detailed=1&clientType=www`
+  const url = `${API}/categories/${encodeURIComponent(lang)}/${section.apiKey}?detailed=1&clientType=www`
   const res = await fetch(url, { signal: AbortSignal.timeout(20000) })
   if (!res.ok) {
     throw new Error(`Impossibile caricare ${section.name} (${res.status})`)
@@ -197,7 +276,7 @@ export async function fetchSectionTracks(
     ) || item.files?.[0]
     if (!file?.progressiveDownloadURL) continue
     tracks.push({
-      id: item.guid,
+      id: `${lang}:${item.guid}`,
       title: item.title,
       url: file.progressiveDownloadURL,
       duration: item.duration || file.duration || 0,
@@ -207,22 +286,30 @@ export async function fetchSectionTracks(
     })
   }
 
-  sectionCache.set(section.slug, { at: Date.now(), tracks })
+  sectionCache.set(key, { at: Date.now(), tracks })
   return tracks.map((track) => ({ ...track }))
 }
 
 export async function fetchTracksForSlugs(
   slugs: SectionSlug[],
+  langCode?: string,
 ): Promise<{ tracks: Track[]; unavailable: string[] }> {
+  const lang = langCode && isMusicLangCode(langCode) ? langCode : getMusicLanguage()
   const wanted =
     slugs.includes('tutto') || slugs.length === 0
       ? SECTIONS
       : SECTIONS.filter((s) => slugs.includes(s.slug))
 
-  const batches = await Promise.allSettled(wanted.map(fetchSectionTracks))
+  const batches = await Promise.allSettled(
+    wanted.map((section) => fetchSectionTracks(section, lang)),
+  )
   const tracks = batches.flatMap((batch) => batch.status === 'fulfilled' ? batch.value : [])
   const unavailable = wanted.filter((_, index) => batches[index].status === 'rejected').map((section) => section.shortName)
-  if (unavailable.length === wanted.length && wanted.length) throw new Error('Catalogo musicale non disponibile. Riprova.')
+  if (unavailable.length === wanted.length && wanted.length) {
+    throw new Error(
+      `Catalogo musicale non disponibile in ${musicLanguageLabel(lang)}. Riprova o scegli un’altra lingua.`,
+    )
+  }
   return { tracks, unavailable }
 }
 

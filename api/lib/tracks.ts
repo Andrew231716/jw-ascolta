@@ -86,8 +86,19 @@ export const SECTION_DEFS: Array<{
   },
 ]
 
-const LANG = 'I'
+const DEFAULT_LANG = 'I'
 const API = 'https://b.jw-cdn.org/apis/mediator/v1'
+
+const MUSIC_LANG_CODES = new Set([
+  'I', 'E', 'S', 'T', 'TPO', 'F', 'X', 'O', 'P', 'M', 'G', 'U', 'K', 'B', 'H',
+  'Z', 'D', 'N', 'FI', 'AL', 'C', 'J', 'KO', 'CHS', 'CH', 'IN', 'TG', 'VT', 'SI',
+  'A', 'TK', 'SW', 'HI',
+])
+
+export function resolveMusicLang(raw: string | null | undefined): string {
+  const code = String(raw || '').trim().toUpperCase()
+  return MUSIC_LANG_CODES.has(code) ? code : DEFAULT_LANG
+}
 
 export type TrackHit = {
   title: string
@@ -164,7 +175,9 @@ export function scoreTitle(title: string, query: string): number {
 
 export async function loadTracks(
   slugs: SectionSlug[] = ['tutto'],
+  langRaw?: string | null,
 ): Promise<TrackHit[]> {
+  const lang = resolveMusicLang(langRaw)
   const wanted =
     slugs.includes('tutto') || slugs.length === 0
       ? SECTION_DEFS
@@ -173,7 +186,7 @@ export async function loadTracks(
   const batches = await Promise.all(
     wanted.map(async (section) => {
       const res = await fetch(
-        `${API}/categories/${LANG}/${section.apiKey}?detailed=1&clientType=www`,
+        `${API}/categories/${encodeURIComponent(lang)}/${section.apiKey}?detailed=1&clientType=www`,
       )
       if (!res.ok) return [] as TrackHit[]
       const data = (await res.json()) as {

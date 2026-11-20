@@ -2,11 +2,16 @@ import { createPortal } from 'react-dom'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   SECTIONS,
+  MUSIC_LANGUAGES,
   buildPlaylist,
   fetchTracksForSlugs,
   formatDuration,
+  getMusicLanguage,
+  musicLanguageLabel,
   parsePlayMode,
   normalizeTitle,
+  setMusicLanguage,
+  type MusicLangCode,
   type Track,
   playlistStartingAtTitle,
   resolveSectionInput,
@@ -150,6 +155,7 @@ export default function App() {
     initial.sections.includes('tutto') ? ['tutto'] : initial.sections,
   )
   const [mode, setMode] = useState<PlayMode>(initial.mode)
+  const [musicLang, setMusicLang] = useState<MusicLangCode>(() => getMusicLanguage())
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [later, setLater] = useState(() => readSaved<Track[]>('later', []))
@@ -663,16 +669,46 @@ export default function App() {
                 setHomeTab('library')
               }}>Libreria</button>
           </nav>, document.body)}
-          {homeTab === 'music' && <div className="cta-row">
-            <button className="btn primary" disabled={catalogLoading}
-              onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
-              {catalogLoading ? 'Caricamento…' : 'Riproduci musica a caso'}
-            </button>
-            <button className="btn ghost" disabled={catalogLoading}
-              onClick={() => void startPlayback(['adunanze'], 'order', true)}>
-              Playlist riunione
-            </button>
-          </div>}
+          {homeTab === 'music' && (
+            <>
+              <label className="music-lang-picker">
+                Lingua audio
+                <select
+                  aria-label="Lingua della musica"
+                  value={musicLang}
+                  disabled={catalogLoading}
+                  onChange={(event) => {
+                    const next = setMusicLanguage(event.target.value)
+                    setMusicLang(next)
+                    setUnifiedMusicHits(null)
+                    setStatus(`Lingua musica: ${musicLanguageLabel(next)}`)
+                    if (player.current) {
+                      closePlayback()
+                    }
+                  }}
+                >
+                  {MUSIC_LANGUAGES.map((lang) => (
+                    <option key={lang.code} value={lang.code}>
+                      {lang.name}
+                      {lang.vernacular && lang.vernacular !== lang.name
+                        ? ` · ${lang.vernacular}`
+                        : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="cta-row">
+                <button className="btn primary" disabled={catalogLoading}
+                  onClick={() => void startPlayback(['tutto'], 'shuffle', true)}>
+                  {catalogLoading ? 'Caricamento…' : 'Riproduci musica a caso'}
+                </button>
+                <button className="btn ghost" disabled={catalogLoading}
+                  onClick={() => void startPlayback(['adunanze'], 'order', true)}>
+                  Playlist riunione
+                </button>
+              </div>
+            </>
+          )}
         </header>
       )}
 
@@ -903,7 +939,8 @@ export default function App() {
 
         <h2>Scegli cosa ascoltare</h2>
         <p className="section-lede">
-          Tocca una o più sezioni, poi riproduci.
+          Tocca una o più sezioni, poi riproduci. Audio in{' '}
+          <strong>{musicLanguageLabel(musicLang)}</strong>.
         </p>
 
         <div className="mode-toggle" role="group" aria-label="Modalità">

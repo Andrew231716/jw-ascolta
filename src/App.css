@@ -281,6 +281,27 @@ button {
   font-size: 1.02rem;
 }
 
+.music-lang-picker {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.65rem 0 0.35rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  max-width: 22rem;
+}
+
+.music-lang-picker select {
+  min-height: 44px;
+  width: 100%;
+  padding: 0.45rem 0.7rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: rgba(12, 36, 41, 0.72);
+  color: var(--text);
+  font: inherit;
+  color-scheme: dark;
+}
+
 .cta-row {
   display: flex;
   flex-wrap: wrap;
