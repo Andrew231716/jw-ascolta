@@ -1,6 +1,7 @@
 import { ArticleNarration } from './ArticleNarration'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Track } from './catalog'
+import { FavoriteButton } from './FavoriteButton'
 import { ShareAudioButtons } from './ShareAudioButtons'
 import {
   clearVideoBookmark,
@@ -331,6 +332,17 @@ export function VideoClipReader({
             )}
           </div>
           <div className="result-actions">
+            <FavoriteButton
+              track={{
+                ...track,
+                contentKind: 'video',
+                clipStart: startCue?.start,
+                clipEnd: endCue?.end,
+              }}
+              kind="video"
+              clipStart={startCue?.start}
+              clipEnd={endCue?.end}
+            />
             <ShareAudioButtons
               track={{
                 ...track,

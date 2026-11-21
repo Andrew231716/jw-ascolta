@@ -27,6 +27,14 @@ import {
   type SectionSlug,
 } from './catalog'
 import { ShareAudioButtons } from './ShareAudioButtons'
+import { FavoriteButton } from './FavoriteButton'
+import {
+  FAVORITES_CHANGED,
+  favoriteKindLabel,
+  listFavorites,
+  removeFavorite,
+  type FavoriteItem,
+} from './favoritesStore'
 import { listBookmarks } from './articleText'
 import { useAudioPlayer } from './useAudioPlayer'
 import { ListeningLibrary } from './ListeningLibrary'
@@ -235,9 +243,7 @@ export default function App() {
   const player = useAudioPlayer()
   const autoplayStarted = useRef(false)
   const [saved, setSaved] = useState(() => readSession())
-  const [favorites, setFavorites] = useState(() =>
-    readSaved<Track[]>('favorites', []).filter(isTrack),
-  )
+  const [favorites, setFavorites] = useState<FavoriteItem[]>(() => listFavorites())
   const [collections, setCollections] = useState(() =>
     readSaved<Collection[]>('collections', []).filter(
       (c) => c && typeof c.id === 'string' && Array.isArray(c.tracks),
@@ -348,7 +354,11 @@ export default function App() {
 
   useEffect(() => saveLocal('later', later), [later])
 
-  useEffect(() => saveLocal('favorites', favorites), [favorites])
+  useEffect(() => {
+    const refresh = () => setFavorites(listFavorites())
+    window.addEventListener(FAVORITES_CHANGED, refresh)
+    return () => window.removeEventListener(FAVORITES_CHANGED, refresh)
+  }, [])
   useEffect(() => saveLocal('collections', collections), [collections])
 
   const fadeOutAndPause = player.fadeOutAndPause
@@ -380,13 +390,31 @@ export default function App() {
     return () => observer.disconnect()
   }, [view, player.current?.id])
 
-  function toggleFavorite(track: Track) {
-    setFavorites((previous) =>
-      previous.some((item) => item.id === track.id)
-        ? previous.filter((item) => item.id !== track.id)
-        : [...previous, track],
-    )
+  function openFavorite(item: FavoriteItem) {
+    if (item.kind === 'article' && (item.source || item.track?.source)) {
+      setResumeReader({
+        id: (item.track?.id || item.id).replace(/^article-/, '').replace(/^article:/, ''),
+        title: item.title,
+        source: item.source || item.track?.source || '',
+      })
+      setHomeTab('listening')
+      setListeningKind('articles')
+      return
+    }
+    if (item.track?.url) {
+      playTracks(
+        [item.track],
+        0,
+        item.clipStart ?? item.track.clipStart ?? 0,
+      )
+      return
+    }
+    setStatus('Questo preferito non ha audio riproducibile.')
   }
+
+  const favoriteTracks = favorites
+    .map((item) => item.track)
+    .filter((track): track is Track => Boolean(track?.url))
 
   function playTracks(tracks: Track[], start = 0, position = 0) {
     setStatus(null)
@@ -969,10 +997,7 @@ export default function App() {
                 >
                   Chiudi riproduzione
                 </button>
-                <button className="btn ghost small" onClick={() => toggleFavorite(player.current!)}
-                  aria-pressed={favorites.some((track) => track.id === player.current?.id)}>
-                  {favorites.some((track) => track.id === player.current?.id) ? '★ Nei preferiti' : '☆ Aggiungi ai preferiti'}
-                </button>
+                <FavoriteButton track={player.current} />
               </div>
               <div className="result-actions">
                 <ShareAudioButtons track={player.current} />
@@ -1244,6 +1269,7 @@ export default function App() {
                     {t.duration ? ` · ${formatDuration(t.duration)}` : ''}
                   </span>
                 </button>
+                <FavoriteButton track={t} compact />
                 <div className="queue-move">
                   <button
                     type="button"
@@ -1298,13 +1324,23 @@ export default function App() {
           {recent.length ? (
             <ul className="library-list">
               {visibleRecent.slice(0, 12).map((item) => (
-                <li key={item.id + item.updatedAt}>
+                <li key={item.id + item.updatedAt} className="library-track-row">
                   <button className="queue-item" onClick={() => playRecentItem(item)}>
                     <span className="q-title">{item.title}</span>
                     <span className="q-meta">
                       {item.kind === 'music' ? 'Musica' : item.kind === 'video' ? 'Video' : 'Articolo'}
                     </span>
                   </button>
+                  {item.track ? (
+                    <FavoriteButton track={item.track} kind={item.kind} compact />
+                  ) : item.source ? (
+                    <FavoriteButton
+                      title={item.title}
+                      kind={item.kind}
+                      source={item.source}
+                      compact
+                    />
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -1361,11 +1397,43 @@ export default function App() {
           <h3 className="library-subhead">Preferiti</h3>
           {favorites.length ? (
             <>
-              <button className="btn ghost small" onClick={() => playTracks(favorites)}>Riproduci preferiti</button>
-              <TrackList tracks={favorites} onPlay={(i) => playTracks(favorites, i)} onRemove={toggleFavorite} />
+              <p className="section-lede">
+                Restano salvati finché non li rimuovi tu · {favorites.length} elementi
+              </p>
+              {favoriteTracks.length > 0 && (
+                <button
+                  className="btn ghost small"
+                  onClick={() => playTracks(favoriteTracks)}
+                >
+                  Riproduci preferiti con audio
+                </button>
+              )}
+              <ul className="library-list">
+                {favorites.map((item) => (
+                  <li key={item.id} className="library-track-row">
+                    <button className="queue-item" onClick={() => openFavorite(item)}>
+                      <span className="q-title">{item.title}</span>
+                      <span className="q-meta">{favoriteKindLabel(item.kind)}</span>
+                    </button>
+                    <div className="result-actions">
+                      {item.track?.url && <ShareAudioButtons track={item.track} compact />}
+                      <button
+                        type="button"
+                        className="btn ghost small"
+                        aria-label={`Rimuovi ${item.title} dai preferiti`}
+                        onClick={() => setFavorites(removeFavorite(item.id))}
+                      >
+                        Rimuovi
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
             </>
           ) : (
-            <p className="library-empty-line">Aggiungi un brano dal lettore con ★.</p>
+            <p className="library-empty-line">
+              Aggiungi musica, articoli o video con ☆ Preferiti. Restano qui finché non li elimini.
+            </p>
           )}
 
           {playlist.length > 0 && (
@@ -1494,8 +1562,11 @@ function TrackList({ tracks, onPlay, onRemove, onChangeLanguage, busyTrackId }: 
               </select>
             </label>
           )}
-          <ShareAudioButtons track={track} compact />
-          {onRemove && <button className="btn ghost small" aria-label={`Rimuovi ${trackPrimaryTitle(track)} dai preferiti`}
+          <div className="result-actions">
+            <FavoriteButton track={track} compact />
+            <ShareAudioButtons track={track} compact />
+          </div>
+          {onRemove && <button className="btn ghost small" aria-label={`Rimuovi ${trackPrimaryTitle(track)}`}
             onClick={() => onRemove(track)}>Rimuovi</button>}
         </li>
       ))}

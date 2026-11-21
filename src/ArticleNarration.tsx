@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom'
 import { hasPersonalVoiceToken, setPersonalVoiceToken, forgetVoiceSample, hasVoiceSample, saveVoiceSample } from './personalVoice'
 import { localResponse, offlineAudio, recordProgress, rememberArticle } from './offlineLibrary.ts'
 import { DownloadButton } from './DownloadButton'
+import { FavoriteButton } from './FavoriteButton'
 import { ShareAudioButtons } from './ShareAudioButtons'
 import { shareOrDownloadMp3 } from './shareAudio'
 import { clearGeneratedAudio } from './generatedAudio.ts'
@@ -944,34 +945,54 @@ export function ArticleNarration({
             </p>
           )}
 
-          {audioUrl && (
-            <div className="result-actions">
-              <ShareAudioButtons
-                track={{
-                  id: articleId,
-                  title: article?.title || title,
-                  url: audioUrl,
-                  duration: audioDuration || 0,
-                  sectionSlug: 'tutto',
-                  sectionName: 'Articolo',
-                  source,
-                  contentKind: 'article',
-                }}
+          <div className="result-actions">
+            {audioUrl ? (
+              <>
+                <FavoriteButton
+                  track={{
+                    id: articleId,
+                    title: article?.title || title,
+                    url: audioUrl,
+                    duration: audioDuration || 0,
+                    sectionSlug: 'tutto',
+                    sectionName: 'Articolo',
+                    source,
+                    contentKind: 'article',
+                  }}
+                />
+                <ShareAudioButtons
+                  track={{
+                    id: articleId,
+                    title: article?.title || title,
+                    url: audioUrl,
+                    duration: audioDuration || 0,
+                    sectionSlug: 'tutto',
+                    sectionName: 'Articolo',
+                    source,
+                    contentKind: 'article',
+                  }}
+                />
+                <DownloadButton
+                  track={{
+                    id: articleId,
+                    title: article?.title || title,
+                    url: audioUrl,
+                    duration: audioDuration || 0,
+                    sectionSlug: 'tutto',
+                    sectionName: 'Articolo',
+                    source,
+                    contentKind: 'article',
+                  }}
+                />
+              </>
+            ) : (
+              <FavoriteButton
+                title={article?.title || title}
+                kind="article"
+                source={source}
               />
-              <DownloadButton
-                track={{
-                  id: articleId,
-                  title: article?.title || title,
-                  url: audioUrl,
-                  duration: audioDuration || 0,
-                  sectionSlug: 'tutto',
-                  sectionName: 'Articolo',
-                  source,
-                  contentKind: 'article',
-                }}
-              />
-            </div>
-          )}
+            )}
+          </div>
           {(status === 'speaking' || status === 'paused') && createPortal(<aside className="narration-dock" aria-label="Lettore compatto articolo">
             <strong>{article?.title || title}</strong>
             <button className="icon-btn" aria-label="Indietro di 15 secondi" onClick={() => skipNarrationAudio(-15)}>−15</button>

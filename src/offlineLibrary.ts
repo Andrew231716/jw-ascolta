@@ -204,8 +204,33 @@ export async function restoreBackup(file: File) {
         !Array.isArray(parsed)
       )
         throw new Error('Elenco non valido nel backup.')
-      if (['jw-ascolta:favorites', 'jw-ascolta:later'].includes(key) && !parsed.every(validTrack))
+      if (
+        key === 'jw-ascolta:later' &&
+        !parsed.every(validTrack)
+      )
         throw new Error('Brano non valido nel backup.')
+      if (
+        key === 'jw-ascolta:favorites' &&
+        !parsed.every((item: unknown) => {
+          if (validTrack(item as Track)) return true
+          if (!item || typeof item !== 'object') return false
+          const fav = item as {
+            id?: string
+            title?: string
+            kind?: string
+            track?: Track
+            source?: string
+          }
+          return (
+            typeof fav.id === 'string' &&
+            typeof fav.title === 'string' &&
+            ['music', 'article', 'video'].includes(String(fav.kind)) &&
+            (!fav.track || validTrack(fav.track)) &&
+            (!fav.source || safeSource(fav.source))
+          )
+        })
+      )
+        throw new Error('Preferito non valido nel backup.')
       if (
         key === 'jw-ascolta:recent' &&
         !parsed.every(

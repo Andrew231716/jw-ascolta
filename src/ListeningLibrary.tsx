@@ -1,4 +1,5 @@
 import { DownloadButton } from './DownloadButton'
+import { FavoriteButton } from './FavoriteButton'
 import { ShareAudioButtons } from './ShareAudioButtons'
 import { localResponse, listeningProgress, PROGRESS_CHANGED } from './offlineLibrary.ts'
 import { LISTENING_THEMES, titleThemes, timedPlaylist } from './listeningThemes.ts'
@@ -796,6 +797,7 @@ export function ListeningLibrary({
                             Leggi e scegli un brano
                           </button>
                         )}
+                        <FavoriteButton track={track} compact />
                         <ShareAudioButtons track={track} compact />
                         <DownloadButton track={track} />
                         <details className="more-actions">
@@ -863,6 +865,12 @@ export function ListeningLibrary({
                         <button className="btn primary small" onClick={() => openReader(item)}>
                           {saved ? 'Riprendi' : 'Ascolta articolo'}
                         </button>
+                        <FavoriteButton
+                          title={item.title}
+                          kind="article"
+                          source={item.source}
+                          compact
+                        />
                         <a href={item.source} target="_blank" rel="noreferrer">
                           JW.org ↗
                         </a>
